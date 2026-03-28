@@ -49,3 +49,39 @@ bool board_config_max31855_has_valid_pins(void)
 
     return true;
 }
+
+size_t board_config_digital_input_count(void)
+{
+    return BOARD_DIGITAL_INPUT_COUNT;
+}
+
+int board_config_digital_input_gpio(size_t channel)
+{
+    static const int digital_input_pins[BOARD_DIGITAL_INPUT_COUNT] = {
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+        BOARD_PIN_PLACEHOLDER,
+    };
+
+    if (channel >= BOARD_DIGITAL_INPUT_COUNT) {
+        return BOARD_PIN_PLACEHOLDER;
+    }
+
+    return digital_input_pins[channel];
+}
+
+bool board_config_digital_inputs_has_valid_pins(void)
+{
+    for (size_t channel = 0; channel < BOARD_DIGITAL_INPUT_COUNT; ++channel) {
+        if (board_config_digital_input_gpio(channel) < 0) {
+            return false;
+        }
+    }
+
+    return true;
+}

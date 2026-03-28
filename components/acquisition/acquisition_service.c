@@ -13,6 +13,7 @@
 
 #include "board_config.h"
 #include "data_model.h"
+#include "digital_inputs.h"
 #include "logger_service.h"
 #include "max31855.h"
 
@@ -28,6 +29,7 @@ static bool s_initialized;
 static bool s_run_task;
 static bool s_active;
 static bool s_use_max31855;
+static bool s_use_digital_inputs;
 static uint32_t s_sample_index;
 
 static uint64_t acquisition_get_uptime_ms(void)
@@ -50,6 +52,33 @@ static max31855_config_t acquisition_build_max31855_config(void)
     return config;
 }
 
+static digital_inputs_config_t acquisition_build_digital_input_config(void)
+{
+    digital_inputs_config_t config = {
+        .channel_count = board_config_digital_input_count(),
+    };
+
+    for (size_t channel = 0; channel < config.channel_count && channel < DIGITAL_INPUTS_MAX_CHANNELS; ++channel) {
+        config.gpio_num[channel] = board_config_digital_input_gpio(channel);
+    }
+
+    return config;
+}
+
+static const char *acquisition_source_detail(void)
+{
+    if (s_use_max31855 && s_use_digital_inputs) {
+        return "max31855+digital_inputs";
+    }
+    if (s_use_max31855) {
+        return "max31855+stub_digital";
+    }
+    if (s_use_digital_inputs) {
+        return "stub_thermocouples+digital_inputs";
+    }
+    return "stub_placeholder_pins";
+}
+
 static void acquisition_fill_stub_thermocouples(kdl_sensor_sample_t *sample)
 {
     sample->thermocouple_valid_mask = (1U << DATA_MODEL_THERMOCOUPLE_COUNT) - 1U;
@@ -61,16 +90,20 @@ static void acquisition_fill_stub_thermocouples(kdl_sensor_sample_t *sample)
     }
 }
 
-static void acquisition_fill_stub_io(kdl_sensor_sample_t *sample)
+static void acquisition_fill_stub_analog_inputs(kdl_sensor_sample_t *sample)
 {
     sample->analog_valid_mask = (1U << DATA_MODEL_ANALOG_INPUT_COUNT) - 1U;
-    sample->digital_valid_mask = 0x000000FFU;
-    sample->digital_inputs = s_sample_index & sample->digital_valid_mask;
 
     for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
         uint32_t phase = (s_sample_index * 17U + (uint32_t)index * 23U) % 100U;
         sample->analog_inputs[index] = ((float)phase * 3.3f) / 100.0f;
     }
+}
+
+static void acquisition_fill_stub_digital_inputs(kdl_sensor_sample_t *sample)
+{
+    sample->digital_valid_mask = 0x000000FFU;
+    sample->digital_inputs = s_sample_index & sample->digital_valid_mask;
 }
 
 static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
@@ -100,16 +133,31 @@ static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
     }
 }
 
+static void acquisition_fill_digital_inputs(kdl_sensor_sample_t *sample)
+{
+    esp_err_t err = digital_inputs_read(&sample->digital_inputs, &sample->digital_valid_mask);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Digital input read failed, using stub values: %s", esp_err_to_name(err));
+        acquisition_fill_stub_digital_inputs(sample);
+    }
+}
+
 static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
 {
     memset(sample, 0, sizeof(*sample));
     sample->uptime_ms = acquisition_get_uptime_ms();
-    acquisition_fill_stub_io(sample);
+    acquisition_fill_stub_analog_inputs(sample);
 
     if (s_use_max31855) {
         acquisition_fill_max31855_thermocouples(sample);
     } else {
         acquisition_fill_stub_thermocouples(sample);
+    }
+
+    if (s_use_digital_inputs) {
+        acquisition_fill_digital_inputs(sample);
+    } else {
+        acquisition_fill_stub_digital_inputs(sample);
     }
 }
 
@@ -118,7 +166,7 @@ static void acquisition_task(void *arg)
     (void)arg;
 
     ESP_LOGI(TAG, "Acquisition task started");
-    (void)logger_service_log_event("acquisition_started", s_use_max31855 ? "max31855" : "stub_placeholder_pins");
+    (void)logger_service_log_event("acquisition_started", acquisition_source_detail());
     s_active = true;
 
     while (s_run_task) {
@@ -146,21 +194,35 @@ esp_err_t acquisition_service_init(void)
     s_active = false;
     s_sample_index = 0;
     s_use_max31855 = false;
+    s_use_digital_inputs = false;
 
     max31855_config_t max31855_config = acquisition_build_max31855_config();
     if (!board_config_max31855_has_valid_pins() || !max31855_has_valid_pins(&max31855_config)) {
         ESP_LOGI(TAG, "MAX31855 pins not configured yet, acquisition will use stub thermocouples");
+    } else {
+        esp_err_t thermocouple_err = max31855_init(&max31855_config);
+        if (thermocouple_err != ESP_OK) {
+            ESP_LOGW(TAG, "MAX31855 init failed, keeping stub thermocouples: %s", esp_err_to_name(thermocouple_err));
+        } else {
+            s_use_max31855 = true;
+            ESP_LOGI(TAG, "MAX31855 driver enabled for thermocouple acquisition");
+        }
+    }
+
+    digital_inputs_config_t digital_config = acquisition_build_digital_input_config();
+    if (!board_config_digital_inputs_has_valid_pins() || !digital_inputs_has_valid_pins(&digital_config)) {
+        ESP_LOGI(TAG, "Digital input pins not configured yet, acquisition will use stub digital values");
         return ESP_OK;
     }
 
-    esp_err_t err = max31855_init(&max31855_config);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "MAX31855 init failed, keeping stub thermocouples: %s", esp_err_to_name(err));
+    esp_err_t digital_err = digital_inputs_init(&digital_config);
+    if (digital_err != ESP_OK) {
+        ESP_LOGW(TAG, "Digital input init failed, keeping stub digital values: %s", esp_err_to_name(digital_err));
         return ESP_OK;
     }
 
-    s_use_max31855 = true;
-    ESP_LOGI(TAG, "MAX31855 driver enabled for thermocouple acquisition");
+    s_use_digital_inputs = true;
+    ESP_LOGI(TAG, "Digital input driver enabled");
     return ESP_OK;
 }
 
