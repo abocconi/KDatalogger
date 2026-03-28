@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "analog_inputs.h"
 #include "board_config.h"
 #include "data_model.h"
 #include "digital_inputs.h"
@@ -30,6 +31,7 @@ static bool s_run_task;
 static bool s_active;
 static bool s_use_max31855;
 static bool s_use_digital_inputs;
+static bool s_use_analog_inputs;
 static uint32_t s_sample_index;
 
 static uint64_t acquisition_get_uptime_ms(void)
@@ -65,18 +67,30 @@ static digital_inputs_config_t acquisition_build_digital_input_config(void)
     return config;
 }
 
+static analog_inputs_config_t acquisition_build_analog_input_config(void)
+{
+    analog_inputs_config_t config = {
+        .channel_count = board_config_analog_input_count(),
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+
+    for (size_t channel = 0; channel < config.channel_count && channel < ANALOG_INPUTS_MAX_CHANNELS; ++channel) {
+        config.gpio_num[channel] = board_config_analog_input_gpio(channel);
+    }
+
+    return config;
+}
+
 static const char *acquisition_source_detail(void)
 {
-    if (s_use_max31855 && s_use_digital_inputs) {
-        return "max31855+digital_inputs";
+    if (s_use_max31855 && s_use_digital_inputs && s_use_analog_inputs) {
+        return "all_drivers";
     }
-    if (s_use_max31855) {
-        return "max31855+stub_digital";
+    if (!s_use_max31855 && !s_use_digital_inputs && !s_use_analog_inputs) {
+        return "stub_placeholder_pins";
     }
-    if (s_use_digital_inputs) {
-        return "stub_thermocouples+digital_inputs";
-    }
-    return "stub_placeholder_pins";
+    return "mixed_sources";
 }
 
 static void acquisition_fill_stub_thermocouples(kdl_sensor_sample_t *sample)
@@ -142,11 +156,29 @@ static void acquisition_fill_digital_inputs(kdl_sensor_sample_t *sample)
     }
 }
 
+static void acquisition_fill_analog_inputs(kdl_sensor_sample_t *sample)
+{
+    uint32_t valid_mask = 0;
+    esp_err_t err = analog_inputs_read(sample->analog_inputs, &valid_mask);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Analog input read failed, using stub values: %s", esp_err_to_name(err));
+        acquisition_fill_stub_analog_inputs(sample);
+        return;
+    }
+
+    sample->analog_valid_mask = (uint8_t)valid_mask;
+}
+
 static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
 {
     memset(sample, 0, sizeof(*sample));
     sample->uptime_ms = acquisition_get_uptime_ms();
-    acquisition_fill_stub_analog_inputs(sample);
+
+    if (s_use_analog_inputs) {
+        acquisition_fill_analog_inputs(sample);
+    } else {
+        acquisition_fill_stub_analog_inputs(sample);
+    }
 
     if (s_use_max31855) {
         acquisition_fill_max31855_thermocouples(sample);
@@ -195,6 +227,7 @@ esp_err_t acquisition_service_init(void)
     s_sample_index = 0;
     s_use_max31855 = false;
     s_use_digital_inputs = false;
+    s_use_analog_inputs = false;
 
     max31855_config_t max31855_config = acquisition_build_max31855_config();
     if (!board_config_max31855_has_valid_pins() || !max31855_has_valid_pins(&max31855_config)) {
@@ -212,17 +245,30 @@ esp_err_t acquisition_service_init(void)
     digital_inputs_config_t digital_config = acquisition_build_digital_input_config();
     if (!board_config_digital_inputs_has_valid_pins() || !digital_inputs_has_valid_pins(&digital_config)) {
         ESP_LOGI(TAG, "Digital input pins not configured yet, acquisition will use stub digital values");
+    } else {
+        esp_err_t digital_err = digital_inputs_init(&digital_config);
+        if (digital_err != ESP_OK) {
+            ESP_LOGW(TAG, "Digital input init failed, keeping stub digital values: %s", esp_err_to_name(digital_err));
+        } else {
+            s_use_digital_inputs = true;
+            ESP_LOGI(TAG, "Digital input driver enabled");
+        }
+    }
+
+    analog_inputs_config_t analog_config = acquisition_build_analog_input_config();
+    if (!board_config_analog_inputs_has_valid_pins() || !analog_inputs_has_valid_pins(&analog_config)) {
+        ESP_LOGI(TAG, "Analog input pins not configured yet, acquisition will use stub analog values");
         return ESP_OK;
     }
 
-    esp_err_t digital_err = digital_inputs_init(&digital_config);
-    if (digital_err != ESP_OK) {
-        ESP_LOGW(TAG, "Digital input init failed, keeping stub digital values: %s", esp_err_to_name(digital_err));
+    esp_err_t analog_err = analog_inputs_init(&analog_config);
+    if (analog_err != ESP_OK) {
+        ESP_LOGW(TAG, "Analog input init failed, keeping stub analog values: %s", esp_err_to_name(analog_err));
         return ESP_OK;
     }
 
-    s_use_digital_inputs = true;
-    ESP_LOGI(TAG, "Digital input driver enabled");
+    s_use_analog_inputs = true;
+    ESP_LOGI(TAG, "Analog input driver enabled");
     return ESP_OK;
 }
 
