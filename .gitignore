@@ -26,6 +26,10 @@ build/
 
 # ESP-IDF specific build outputs
 *.bin
+# ...but the embedded UI assets are sources, not build output: the firmware
+# links the splash blob in via EMBED_FILES, so excluding it would break a
+# fresh clone with a linker error about a missing _binary_* symbol.
+!components/gui/assets/*.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory
@@ -63,6 +67,7 @@ env/
 
 # Language Servers
 .clangd/
+.cache/
 .ccls-cache/
 compile_commands.json
 
