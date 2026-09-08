@@ -4,9 +4,6 @@
 
 #include "esp_err.h"
 
-/** @brief Toggle CSV logging on/off, mirroring logger_service_is_active(). */
-void gui_action_toggle_recording(void);
-
 typedef esp_err_t (*gui_actions_usb_msc_transition_fn_t)(void);
 typedef bool (*gui_actions_usb_msc_is_active_fn_t)(void);
 

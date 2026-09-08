@@ -10,6 +10,7 @@
 #include "display_driver.h"
 #include "page_manager.h"
 #include "pages.h"
+#include "settings_service.h"
 
 #define GUI_BUTTON_POLL_PERIOD_MS 30
 #define GUI_BUTTON_DEBOUNCE_SAMPLES 2
@@ -88,6 +89,11 @@ esp_err_t gui_service_init(void)
     }
 
     ESP_RETURN_ON_ERROR(display_driver_init(), TAG, "display init failed");
+    /* display_driver_init() brings the backlight up at full brightness; apply
+     * the operator's stored level once the panel is alive so the setting
+     * survives a power cycle instead of only lasting the session. */
+    ESP_RETURN_ON_ERROR(display_driver_set_backlight(settings_service_get_brightness_percent()),
+                        TAG, "backlight init failed");
 
     ESP_RETURN_ON_FALSE(display_driver_lock(0), ESP_FAIL, TAG, "failed to lock lvgl");
     page_manager_init(lv_screen_active());

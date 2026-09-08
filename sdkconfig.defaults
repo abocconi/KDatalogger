@@ -20,3 +20,10 @@ CONFIG_FATFS_LFN_HEAP=y
 
 # On chips with USB Serial JTAG, disable secondary console which does not make sense when using console component
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# LVGL fonts used by the KDatalogger theme (see kdl_theme.h)
+CONFIG_LV_FONT_MONTSERRAT_10=y
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y

@@ -17,8 +17,6 @@
 
 #include "board_config.h"
 
-#define DISPLAY_PANEL_HOR_RES 480
-#define DISPLAY_PANEL_VER_RES 320
 #define DISPLAY_SPI_PCLK_HZ (40 * 1000 * 1000)
 #define DISPLAY_LVGL_BUFFER_LINES (DISPLAY_PANEL_VER_RES / 10)
 

@@ -6,6 +6,12 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
+/** Panel resolution in the LVGL logical (post-rotation) coordinate space,
+ *  landscape. Shared with gui layout code that needs to anchor positions
+ *  against the physical screen edges (see page_manager.c). */
+#define DISPLAY_PANEL_HOR_RES 480
+#define DISPLAY_PANEL_VER_RES 320
+
 /**
  * @brief Bring up the ST7796 panel (SPI3 bus, backlight) and the LVGL port.
  *
