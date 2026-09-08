@@ -18,7 +18,11 @@
 #define LOGGER_FILE_PREFIX "log_"
 #define LOGGER_FILE_EXTENSION ".csv"
 #define LOGGER_PATH_MAX_LEN 96
-#define LOGGER_SAMPLE_FLUSH_PERIOD 5U
+/* Time-based rather than sample-based: the acquisition period is configurable
+ * (100 ms - 5 s), and a per-sample count would turn into an fsync every 500 ms
+ * at the fast end -- needless flash wear and a periodic stall in the
+ * acquisition loop, since fsync on FAT+wear_levelling can take tens of ms. */
+#define LOGGER_FLUSH_PERIOD_MS 2000ULL
 #define LOGGER_EMPTY_SAMPLE_FIELDS 16U
 /* Maximum number of log files kept on the filesystem.  When this limit is
  * reached the oldest file is deleted before creating the new one.  Set to
@@ -31,7 +35,8 @@ static FILE *s_log_file;
 static bool s_initialized;
 static bool s_active;
 static char s_current_path[LOGGER_PATH_MAX_LEN];
-static uint32_t s_samples_since_flush;
+static uint32_t s_sample_count;
+static uint64_t s_last_flush_ms;
 
 static uint64_t logger_get_uptime_ms(void)
 {
@@ -170,9 +175,10 @@ static esp_err_t logger_commit_row(bool force_flush)
         return ESP_FAIL;
     }
 
-    if (force_flush || s_samples_since_flush >= LOGGER_SAMPLE_FLUSH_PERIOD) {
+    uint64_t now_ms = logger_get_uptime_ms();
+    if (force_flush || (now_ms - s_last_flush_ms) >= LOGGER_FLUSH_PERIOD_MS) {
         ESP_RETURN_ON_ERROR(logger_service_flush(), TAG, "flush failed");
-        s_samples_since_flush = 0;
+        s_last_flush_ms = now_ms;
     }
 
     return ESP_OK;
@@ -184,7 +190,7 @@ esp_err_t logger_service_init(void)
     s_active = false;
     s_initialized = true;
     s_current_path[0] = '\0';
-    s_samples_since_flush = 0;
+    s_last_flush_ms = 0;
     return ESP_OK;
 }
 
@@ -206,11 +212,13 @@ esp_err_t logger_service_start(void)
     s_log_file = fopen(s_current_path, "w");
     ESP_RETURN_ON_FALSE(s_log_file != NULL, ESP_FAIL, TAG, "failed to open %s", s_current_path);
 
+    s_sample_count = 0;
+
     fprintf(s_log_file,
             "uptime_ms,record_type,event,detail,tc01_c,tc02_c,tc03_c,tc04_c,tc05_c,tc06_c,tc07_c,tc08_c,"
             "tc_valid_mask,ai01,ai02,ai03,ai04,ai05,ai_valid_mask,di_value,di_valid_mask\n");
     s_active = true;
-    s_samples_since_flush = 0;
+    s_last_flush_ms = logger_get_uptime_ms();
 
     ESP_RETURN_ON_ERROR(logger_service_log_event("logger_started", s_current_path), TAG, "initial log failed");
     ESP_LOGI(TAG, "Logging to %s", s_current_path);
@@ -292,7 +300,7 @@ esp_err_t logger_service_log_sample(const kdl_sensor_sample_t *sample)
     fprintf(s_log_file, ",0x%08" PRIx32, sample->digital_valid_mask);
     fputc('\n', s_log_file);
 
-    s_samples_since_flush++;
+    s_sample_count++;
     return logger_commit_row(false);
 }
 
@@ -304,4 +312,9 @@ bool logger_service_is_active(void)
 const char *logger_service_get_current_path(void)
 {
     return s_current_path;
+}
+
+uint32_t logger_service_get_sample_count(void)
+{
+    return s_sample_count;
 }

@@ -3,6 +3,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_partition.h"
+#include "esp_vfs_fat.h"
 
 static const char *TAG = "storage";
 
@@ -48,4 +49,14 @@ storage_owner_t storage_manager_get_owner(void)
 wl_handle_t storage_manager_get_wl_handle(void)
 {
     return s_wl_handle;
+}
+
+esp_err_t storage_manager_get_usage(uint64_t *total_bytes, uint64_t *free_bytes)
+{
+    ESP_RETURN_ON_FALSE(total_bytes != NULL && free_bytes != NULL, ESP_ERR_INVALID_ARG,
+                        TAG, "null output");
+    ESP_RETURN_ON_FALSE(storage_manager_get_owner() == STORAGE_OWNER_FIRMWARE,
+                        ESP_ERR_INVALID_STATE, TAG, "volume not owned by firmware");
+
+    return esp_vfs_fat_info(STORAGE_MOUNT_PATH, total_bytes, free_bytes);
 }
