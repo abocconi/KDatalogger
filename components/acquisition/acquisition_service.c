@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -18,6 +19,7 @@
 #include "digital_inputs.h"
 #include "logger_service.h"
 #include "max31855.h"
+#include "settings_service.h"
 
 #define ACQUISITION_TASK_NAME "acquisition"
 #define ACQUISITION_TASK_STACK_SIZE 4096
@@ -25,7 +27,11 @@
  * ESP_LVGL_PORT_INIT_CONFIG) so a 1s acquisition/logging cycle can never
  * preempt and stall the display flush task. */
 #define ACQUISITION_TASK_PRIORITY 3
-#define ACQUISITION_PERIOD_MS 1000
+/* The per-sample sensor line is ~220 chars: at 115200 baud that is ~19 ms of
+ * blocking UART writes inside the loop, which would dominate the cycle at
+ * short acquisition periods. Rate-limit it so diagnostics cost stays flat
+ * regardless of the configured period. */
+#define ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US 1000000
 
 static const char *TAG = "acquisition";
 
@@ -36,11 +42,39 @@ static bool s_active;
 static bool s_use_max31855;
 static bool s_use_digital_inputs;
 static bool s_use_analog_inputs;
+static int s_record_enable_gpio = -1;
 static uint32_t s_sample_index;
 static kdl_sensor_sample_t s_last_sample;
+static kdl_sensor_extremes_t s_extremes;
 static SemaphoreHandle_t s_sample_mutex;
 
 #define ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS 50
+
+/** Fold one sample into the running extremes. Caller must hold s_sample_mutex. */
+static void acquisition_update_extremes(const kdl_sensor_sample_t *sample)
+{
+    for (size_t index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
+        const uint16_t bit = (uint16_t)(1U << index);
+        if ((sample->thermocouple_valid_mask & bit) == 0U) {
+            continue;
+        }
+
+        const float value = sample->thermocouples_c[index];
+        if ((s_extremes.valid_mask & bit) == 0U) {
+            s_extremes.thermocouple_min_c[index] = value;
+            s_extremes.thermocouple_max_c[index] = value;
+            s_extremes.valid_mask |= bit;
+            continue;
+        }
+
+        if (value < s_extremes.thermocouple_min_c[index]) {
+            s_extremes.thermocouple_min_c[index] = value;
+        }
+        if (value > s_extremes.thermocouple_max_c[index]) {
+            s_extremes.thermocouple_max_c[index] = value;
+        }
+    }
+}
 
 static uint64_t acquisition_get_uptime_ms(void)
 {
@@ -207,24 +241,66 @@ static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
     }
 }
 
+/**
+ * @brief Start/stop logging to follow AI1 (GPIO13), read as a digital input.
+ *
+ * High = recording ON, low = recording OFF. Called once per acquisition
+ * cycle, so the response to a level change is bounded by
+ * ACQUISITION_PERIOD_MS.
+ */
+static void acquisition_sync_recording_state(void)
+{
+    if (s_record_enable_gpio < 0) {
+        return;
+    }
+
+    bool want_recording = gpio_get_level(s_record_enable_gpio) != 0;
+    bool is_recording = logger_service_is_active();
+    if (want_recording == is_recording) {
+        return;
+    }
+
+    esp_err_t err = want_recording ? logger_service_start() : logger_service_stop();
+    if (err == ESP_OK && want_recording) {
+        /* A new run starts with a clean slate: min/max on screen must describe
+         * this session, not whatever the probes saw while idling in the pits. */
+        (void)acquisition_service_reset_extremes();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "recording %s (AI1) failed: %s",
+                 want_recording ? "start" : "stop", esp_err_to_name(err));
+    }
+}
+
 static void acquisition_task(void *arg)
 {
     (void)arg;
 
     ESP_LOGI(TAG, "Acquisition task started");
-    (void)logger_service_log_event("acquisition_started", acquisition_source_detail());
+    if (logger_service_is_active()) {
+        (void)logger_service_log_event("acquisition_started", acquisition_source_detail());
+    }
     s_active = true;
 
+    TickType_t last_wake_time = xTaskGetTickCount();
+    int64_t last_verbose_log_us = 0;
+
     while (s_run_task) {
+        acquisition_sync_recording_state();
+
         kdl_sensor_sample_t sample = {0};
         acquisition_fill_sample(&sample);
 
         if (xSemaphoreTake(s_sample_mutex, pdMS_TO_TICKS(ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS)) == pdTRUE) {
             s_last_sample = sample;
+            acquisition_update_extremes(&sample);
             xSemaphoreGive(s_sample_mutex);
         }
 
-        ESP_LOGI(TAG,
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_verbose_log_us >= ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US) {
+            last_verbose_log_us = now_us;
+            ESP_LOGI(TAG,
                  "[%"PRIu64"ms] TC(C)[%s]: %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s"
                  " | AI(V)[%s]: %.3f %.3f %.3f %.3f %.3f (mask=0x%02x)"
                  " | DI: 0x%02"PRIx32" (mask=0x%02"PRIx32")",
@@ -243,14 +319,31 @@ static void acquisition_task(void *arg)
                  sample.analog_inputs[3], sample.analog_inputs[4],
                  (unsigned)sample.analog_valid_mask,
                  sample.digital_inputs, sample.digital_valid_mask);
-        if (logger_service_log_sample(&sample) != ESP_OK) {
+        }
+
+        if (logger_service_is_active() && logger_service_log_sample(&sample) != ESP_OK) {
             ESP_LOGW(TAG, "Sample logging failed");
         }
         s_sample_index++;
-        vTaskDelay(pdMS_TO_TICKS(ACQUISITION_PERIOD_MS));
+
+        /* xTaskDelayUntil() keeps a fixed phase: the period is measured from
+         * the previous wake-up, not from the end of the work, so the cycle
+         * time does not drift by however long acquisition+logging took.
+         * The period is re-read every cycle so a settings change applies to
+         * the next one. */
+        uint32_t period_ms = settings_service_get_acquisition_period_ms();
+        if (xTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(period_ms)) == pdFALSE) {
+            /* The deadline had already passed: the cycle overran its period.
+             * Re-anchor the phase, otherwise xTaskDelayUntil() would fire
+             * back-to-back trying to catch up and starve lower-priority tasks. */
+            last_wake_time = xTaskGetTickCount();
+            ESP_LOGW(TAG, "acquisition cycle overran the %" PRIu32 " ms period", period_ms);
+        }
     }
 
-    (void)logger_service_log_event("acquisition_stopped", "service_stop");
+    if (logger_service_is_active()) {
+        (void)logger_service_log_event("acquisition_stopped", "service_stop");
+    }
     s_active = false;
     s_task_handle = NULL;
     ESP_LOGI(TAG, "Acquisition task stopped");
@@ -267,11 +360,33 @@ esp_err_t acquisition_service_init(void)
     s_use_max31855 = false;
     s_use_digital_inputs = false;
     s_use_analog_inputs = false;
+    s_record_enable_gpio = -1;
     memset(&s_last_sample, 0, sizeof(s_last_sample));
 
     if (s_sample_mutex == NULL) {
         s_sample_mutex = xSemaphoreCreateMutex();
         ESP_RETURN_ON_FALSE(s_sample_mutex != NULL, ESP_ERR_NO_MEM, TAG, "failed to create sample mutex");
+    }
+
+    int record_enable_gpio = board_config_record_enable_gpio();
+    if (record_enable_gpio < 0) {
+        ESP_LOGI(TAG, "Record-enable pin not configured, logging will not follow AI1");
+    } else {
+        gpio_config_t record_enable_config = {
+            .pin_bit_mask = 1ULL << record_enable_gpio,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        esp_err_t record_enable_err = gpio_config(&record_enable_config);
+        if (record_enable_err != ESP_OK) {
+            ESP_LOGW(TAG, "Record-enable GPIO%d config failed, logging will not follow AI1: %s",
+                     record_enable_gpio, esp_err_to_name(record_enable_err));
+        } else {
+            s_record_enable_gpio = record_enable_gpio;
+            ESP_LOGI(TAG, "Recording follows AI1 (GPIO%d): high = ON, low = OFF", record_enable_gpio);
+        }
     }
 
     max31855_config_t max31855_config = acquisition_build_max31855_config();
@@ -367,6 +482,33 @@ esp_err_t acquisition_service_get_latest_sample(kdl_sensor_sample_t *out)
     }
 
     *out = s_last_sample;
+    xSemaphoreGive(s_sample_mutex);
+    return ESP_OK;
+}
+
+esp_err_t acquisition_service_get_extremes(kdl_sensor_extremes_t *out)
+{
+    ESP_RETURN_ON_FALSE(out != NULL, ESP_ERR_INVALID_ARG, TAG, "out is null");
+    ESP_RETURN_ON_FALSE(s_initialized && s_sample_mutex != NULL, ESP_ERR_INVALID_STATE, TAG, "acquisition not initialized");
+
+    if (xSemaphoreTake(s_sample_mutex, pdMS_TO_TICKS(ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    *out = s_extremes;
+    xSemaphoreGive(s_sample_mutex);
+    return ESP_OK;
+}
+
+esp_err_t acquisition_service_reset_extremes(void)
+{
+    ESP_RETURN_ON_FALSE(s_initialized && s_sample_mutex != NULL, ESP_ERR_INVALID_STATE, TAG, "acquisition not initialized");
+
+    if (xSemaphoreTake(s_sample_mutex, pdMS_TO_TICKS(ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    memset(&s_extremes, 0, sizeof(s_extremes));
     xSemaphoreGive(s_sample_mutex);
     return ESP_OK;
 }

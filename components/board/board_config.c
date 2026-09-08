@@ -90,9 +90,9 @@ size_t board_config_analog_input_count(void)
 
 int board_config_analog_input_gpio(size_t channel)
 {
+    /* AI1 (GPIO13) is no longer part of this group: it is now the digital
+     * record-enable input, see board_config_record_enable_gpio(). */
     static const int analog_input_pins[BOARD_ANALOG_INPUT_COUNT] = {
-        13,
-        //46,
         9,
         7,
         6,
@@ -116,6 +116,11 @@ bool board_config_analog_inputs_has_valid_pins(void)
     }
 
     return true;
+}
+
+int board_config_record_enable_gpio(void)
+{
+    return 13;
 }
 
 spi_host_device_t board_config_display_host(void)
