@@ -63,6 +63,22 @@ Il logging non parte automaticamente all'accensione: segue il livello dell'ingre
 enable" (AI1 / GPIO13) — alto = logging ON, basso = OFF. Serve un comando esterno (interruttore o
 segnale) per avviare/fermare la sessione senza passare dalla GUI.
 
+### Formato dei file di log
+
+Ogni sessione di registrazione crea `/data/logs/log_NNNN.csv` (max 40 file, il più vecchio viene
+cancellato). Il file è pensato per essere aperto con doppio click in Excel italiano: separatore
+`;`, decimale `,`, UTF-8 con BOM.
+
+```
+Data;Ora;Tempo [s];TC1 [°C];…;TC8 [°C];AI2 [V];…;AI6 [V]
+23/09/2026;14:32:05;0,00;85,25;…;;1,234;…
+```
+
+- `Data`/`Ora` sono vuote se l'orologio non è stato impostato dopo l'accensione.
+- `Tempo [s]` parte da 0 al primo campione della sessione: è l'asse X per i grafici.
+- Un canale non valido (termocoppia aperta/in corto, errore ADC) è una cella vuota.
+- AI1 non compare: è l'ingresso record-enable. Gli analogici sono in volt, senza scala.
+
 ### USB MSC: accesso esclusivo
 
 La partizione `storage` non può essere scritta contemporaneamente da firmware e host USB:

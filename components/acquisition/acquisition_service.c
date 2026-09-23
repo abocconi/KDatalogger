@@ -209,8 +209,10 @@ static void acquisition_fill_analog_inputs(kdl_sensor_sample_t *sample)
     uint32_t valid_mask = 0;
     esp_err_t err = analog_inputs_read(sample->analog_inputs, &valid_mask);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Analog input read failed, using stub values: %s", esp_err_to_name(err));
-        acquisition_fill_stub_analog_inputs(sample);
+        /* Mark every channel invalid rather than substituting stub values: a
+         * synthetic reading flagged valid would land in the log as real data. */
+        ESP_LOGW(TAG, "Analog input read failed: %s", esp_err_to_name(err));
+        sample->analog_valid_mask = 0;
         return;
     }
 
@@ -276,10 +278,7 @@ static void acquisition_task(void *arg)
 {
     (void)arg;
 
-    ESP_LOGI(TAG, "Acquisition task started");
-    if (logger_service_is_active()) {
-        (void)logger_service_log_event("acquisition_started", acquisition_source_detail());
-    }
+    ESP_LOGI(TAG, "Acquisition task started (%s)", acquisition_source_detail());
     s_active = true;
 
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -341,9 +340,6 @@ static void acquisition_task(void *arg)
         }
     }
 
-    if (logger_service_is_active()) {
-        (void)logger_service_log_event("acquisition_stopped", "service_stop");
-    }
     s_active = false;
     s_task_handle = NULL;
     ESP_LOGI(TAG, "Acquisition task stopped");

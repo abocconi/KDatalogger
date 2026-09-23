@@ -3,10 +3,12 @@
 #include <dirent.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "esp_check.h"
@@ -14,6 +16,7 @@
 #include "esp_timer.h"
 
 #include "storage_manager.h"
+#include "timekeeping.h"
 
 #define LOGGER_FILE_PREFIX "log_"
 #define LOGGER_FILE_EXTENSION ".csv"
@@ -23,11 +26,24 @@
  * at the fast end -- needless flash wear and a periodic stall in the
  * acquisition loop, since fsync on FAT+wear_levelling can take tens of ms. */
 #define LOGGER_FLUSH_PERIOD_MS 2000ULL
-#define LOGGER_EMPTY_SAMPLE_FIELDS 16U
 /* Maximum number of log files kept on the filesystem.  When this limit is
  * reached the oldest file is deleted before creating the new one.  Set to
  * a value safely below the SPIFFS per-partition object limit (~45-50). */
 #define LOGGER_MAX_FILES 40U
+
+/* The file is meant to be double-clicked open in an Italian-locale Excel:
+ * ';' as field separator and ',' as decimal mark, which is what Excel expects
+ * there. The UTF-8 BOM is what makes Excel decode the degree sign correctly. */
+#define LOGGER_CSV_SEPARATOR ';'
+#define LOGGER_DECIMAL_MARK ','
+#define LOGGER_UTF8_BOM "\xEF\xBB\xBF"
+#define LOGGER_DEGREE_SIGN "\xC2\xB0"
+#define LOGGER_EOL "\r\n"
+#define LOGGER_TC_DECIMALS 2
+#define LOGGER_AI_DECIMALS 3
+/* AI1 is the record-enable input and is not sampled, so the first analog
+ * channel of the data model is AI2 on the connector. */
+#define LOGGER_FIRST_ANALOG_LABEL 2U
 
 static const char *TAG = "logger";
 
@@ -37,6 +53,8 @@ static bool s_active;
 static char s_current_path[LOGGER_PATH_MAX_LEN];
 static uint32_t s_sample_count;
 static uint64_t s_last_flush_ms;
+/** Uptime of the first sample of the session: the zero of the "Tempo" column. */
+static uint64_t s_session_start_ms;
 
 static uint64_t logger_get_uptime_ms(void)
 {
@@ -146,25 +164,64 @@ static esp_err_t logger_resolve_next_path(void)
     return ESP_OK;
 }
 
-static void logger_write_csv_field(FILE *file, const char *text)
+static void logger_write_header(FILE *file)
 {
-    fputc('"', file);
-    if (text != NULL) {
-        for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-            if (*cursor == '"') {
-                fputc('"', file);
-            }
-            fputc(*cursor, file);
-        }
+    fputs(LOGGER_UTF8_BOM "Data;Ora;Tempo [s]", file);
+    for (unsigned index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
+        fprintf(file, ";TC%u [" LOGGER_DEGREE_SIGN "C]", index + 1U);
     }
-    fputc('"', file);
+    for (unsigned index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
+        fprintf(file, ";AI%u [V]", index + LOGGER_FIRST_ANALOG_LABEL);
+    }
+    fputs(LOGGER_EOL, file);
 }
 
-static void logger_write_empty_fields(FILE *file, size_t count)
+/**
+ * Write a measurement cell preceded by its separator. An invalid or
+ * non-finite value leaves the cell empty, so Excel breaks the plotted line
+ * instead of drawing a spike to whatever number the sample happened to hold.
+ */
+static void logger_write_value(FILE *file, bool valid, float value, int decimals)
 {
-    for (size_t index = 0; index < count; ++index) {
-        fputc(',', file);
+    fputc(LOGGER_CSV_SEPARATOR, file);
+    if (!valid || !isfinite(value)) {
+        return;
     }
+
+    /* newlib's printf ignores the locale, so the decimal mark is patched in. */
+    char text[24];
+    const int len = snprintf(text, sizeof(text), "%.*f", decimals, (double)value);
+    if (len <= 0 || len >= (int)sizeof(text)) {
+        return;
+    }
+    char *dot = strchr(text, '.');
+    if (dot != NULL) {
+        *dot = LOGGER_DECIMAL_MARK;
+    }
+    fputs(text, file);
+}
+
+/** Date and time cells; both empty while the operator has not set the clock. */
+static void logger_write_wall_clock(FILE *file)
+{
+    if (!timekeeping_is_valid()) {
+        fputc(LOGGER_CSV_SEPARATOR, file);
+        return;
+    }
+
+    struct tm now;
+    timekeeping_get(&now);
+    fprintf(file, "%02d/%02d/%04d%c%02d:%02d:%02d",
+            now.tm_mday, now.tm_mon + 1, now.tm_year + 1900, LOGGER_CSV_SEPARATOR,
+            now.tm_hour, now.tm_min, now.tm_sec);
+}
+
+/** Seconds since the session start, formatted in integer math: exact however long the run. */
+static void logger_write_elapsed(FILE *file, uint64_t uptime_ms)
+{
+    const uint64_t elapsed_ms = (uptime_ms > s_session_start_ms) ? uptime_ms - s_session_start_ms : 0U;
+    fprintf(file, "%c%" PRIu64 "%c%02u", LOGGER_CSV_SEPARATOR, elapsed_ms / 1000U,
+            LOGGER_DECIMAL_MARK, (unsigned)((elapsed_ms % 1000U) / 10U));
 }
 
 static esp_err_t logger_commit_row(bool force_flush)
@@ -213,14 +270,22 @@ esp_err_t logger_service_start(void)
     ESP_RETURN_ON_FALSE(s_log_file != NULL, ESP_FAIL, TAG, "failed to open %s", s_current_path);
 
     s_sample_count = 0;
+    s_session_start_ms = 0;
 
-    fprintf(s_log_file,
-            "uptime_ms,record_type,event,detail,tc01_c,tc02_c,tc03_c,tc04_c,tc05_c,tc06_c,tc07_c,tc08_c,"
-            "tc_valid_mask,ai01,ai02,ai03,ai04,ai05,ai_valid_mask,di_value,di_valid_mask\n");
+    logger_write_header(s_log_file);
     s_active = true;
     s_last_flush_ms = logger_get_uptime_ms();
 
-    ESP_RETURN_ON_ERROR(logger_service_log_event("logger_started", s_current_path), TAG, "initial log failed");
+    /* Flush the header right away: a session that ends before its first
+     * periodic flush still leaves a well-formed file behind. */
+    if (logger_commit_row(true) != ESP_OK) {
+        fclose(s_log_file);
+        s_log_file = NULL;
+        s_active = false;
+        ESP_LOGE(TAG, "failed to write header to %s", s_current_path);
+        return ESP_FAIL;
+    }
+
     ESP_LOGI(TAG, "Logging to %s", s_current_path);
     return ESP_OK;
 }
@@ -231,12 +296,15 @@ esp_err_t logger_service_stop(void)
         return ESP_OK;
     }
 
-    (void)logger_service_log_event("logger_stopped", "service_stop");
-    (void)logger_service_flush();
-    fclose(s_log_file);
+    const esp_err_t flush_err = logger_service_flush();
+    const int close_result = fclose(s_log_file);
     s_log_file = NULL;
     s_active = false;
-    ESP_LOGI(TAG, "Logger stopped");
+
+    ESP_RETURN_ON_ERROR(flush_err, TAG, "final flush failed for %s", s_current_path);
+    ESP_RETURN_ON_FALSE(close_result == 0, ESP_FAIL, TAG, "fclose failed for %s: errno=%d",
+                        s_current_path, errno);
+    ESP_LOGI(TAG, "Logger stopped (%" PRIu32 " samples)", s_sample_count);
     return ESP_OK;
 }
 
@@ -259,46 +327,27 @@ esp_err_t logger_service_flush(void)
     return ESP_OK;
 }
 
-esp_err_t logger_service_log_event(const char *event, const char *detail)
-{
-    ESP_RETURN_ON_FALSE(s_active && s_log_file != NULL, ESP_ERR_INVALID_STATE, TAG, "logger inactive");
-    ESP_RETURN_ON_FALSE(event != NULL, ESP_ERR_INVALID_ARG, TAG, "event is required");
-
-    fprintf(s_log_file, "%" PRIu64 ",", logger_get_uptime_ms());
-    logger_write_csv_field(s_log_file, "event");
-    fputc(',', s_log_file);
-    logger_write_csv_field(s_log_file, event);
-    fputc(',', s_log_file);
-    logger_write_csv_field(s_log_file, detail);
-    logger_write_empty_fields(s_log_file, LOGGER_EMPTY_SAMPLE_FIELDS);
-    fputc('\n', s_log_file);
-
-    return logger_commit_row(true);
-}
-
 esp_err_t logger_service_log_sample(const kdl_sensor_sample_t *sample)
 {
     ESP_RETURN_ON_FALSE(s_active && s_log_file != NULL, ESP_ERR_INVALID_STATE, TAG, "logger inactive");
     ESP_RETURN_ON_FALSE(sample != NULL, ESP_ERR_INVALID_ARG, TAG, "sample is required");
 
-    fprintf(s_log_file, "%" PRIu64 ",", sample->uptime_ms);
-    logger_write_csv_field(s_log_file, "sample");
-    fputc(',', s_log_file);
-    logger_write_csv_field(s_log_file, NULL);
-    fputc(',', s_log_file);
-    logger_write_csv_field(s_log_file, NULL);
+    if (s_sample_count == 0U) {
+        s_session_start_ms = sample->uptime_ms;
+    }
+
+    logger_write_wall_clock(s_log_file);
+    logger_write_elapsed(s_log_file, sample->uptime_ms);
 
     for (size_t index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
-        fprintf(s_log_file, ",%.2f", sample->thermocouples_c[index]);
+        const bool valid = (sample->thermocouple_valid_mask & (1U << index)) != 0U;
+        logger_write_value(s_log_file, valid, sample->thermocouples_c[index], LOGGER_TC_DECIMALS);
     }
-    fprintf(s_log_file, ",0x%04" PRIx16, sample->thermocouple_valid_mask);
     for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
-        fprintf(s_log_file, ",%.3f", sample->analog_inputs[index]);
+        const bool valid = (sample->analog_valid_mask & (1U << index)) != 0U;
+        logger_write_value(s_log_file, valid, sample->analog_inputs[index], LOGGER_AI_DECIMALS);
     }
-    fprintf(s_log_file, ",0x%02" PRIx8, sample->analog_valid_mask);
-    fprintf(s_log_file, ",0x%08" PRIx32, sample->digital_inputs);
-    fprintf(s_log_file, ",0x%08" PRIx32, sample->digital_valid_mask);
-    fputc('\n', s_log_file);
+    fputs(LOGGER_EOL, s_log_file);
 
     s_sample_count++;
     return logger_commit_row(false);

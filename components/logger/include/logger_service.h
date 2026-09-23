@@ -12,7 +12,16 @@ esp_err_t logger_service_init(void);
 esp_err_t logger_service_start(void);
 esp_err_t logger_service_stop(void);
 esp_err_t logger_service_flush(void);
-esp_err_t logger_service_log_event(const char *event, const char *detail);
+
+/**
+ * @brief Append one sample row to the current log file.
+ *
+ * The file is a CSV for an Italian-locale Excel (';' separator, ',' decimal
+ * mark, UTF-8 BOM) with columns Data, Ora, Tempo [s], TC1..TC8 [°C] and
+ * AI2..AI6 [V]. Data/Ora are empty while the wall clock is not set; Tempo
+ * counts from the first sample of the session. Channels flagged invalid in
+ * the sample are written as empty cells.
+ */
 esp_err_t logger_service_log_sample(const kdl_sensor_sample_t *sample);
 bool logger_service_is_active(void);
 const char *logger_service_get_current_path(void);

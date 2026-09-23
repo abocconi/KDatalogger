@@ -91,8 +91,14 @@ esp_err_t app_controller_enter_usb_msc_mode(void)
     }
 
     if (logger_service_is_active()) {
-        (void)logger_service_log_event("usb_msc_requested", "handoff_to_host");
-        ESP_RETURN_ON_ERROR(logger_service_stop(), TAG, "logger stop failed");
+        /* The file is closed even when the final flush fails, so the handoff
+         * is still safe -- aborting here would only lock the operator out of
+         * the logs that did make it to flash. */
+        const esp_err_t stop_err = logger_service_stop();
+        if (stop_err != ESP_OK) {
+            ESP_LOGW(TAG, "logger stop failed (%s), continuing USB handoff",
+                     esp_err_to_name(stop_err));
+        }
     }
 
     ESP_RETURN_ON_ERROR(storage_manager_prepare_for_usb_export(), TAG, "storage handoff failed");
