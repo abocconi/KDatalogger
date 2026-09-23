@@ -35,10 +35,11 @@
 
 static const char *TAG = "acquisition";
 
-static TaskHandle_t s_task_handle;
+/* Shared between the acquisition task and the caller of start/stop. */
+static TaskHandle_t volatile s_task_handle;
 static bool s_initialized;
-static bool s_run_task;
-static bool s_active;
+static volatile bool s_run_task;
+static volatile bool s_active;
 static bool s_use_max31855;
 static bool s_use_digital_inputs;
 static bool s_use_analog_inputs;
@@ -46,6 +47,8 @@ static int s_record_enable_gpio = -1;
 static kdl_sensor_sample_t s_last_sample;
 static kdl_sensor_extremes_t s_extremes;
 static SemaphoreHandle_t s_sample_mutex;
+/** Given by acquisition_service_stop() to cut the inter-cycle wait short. */
+static SemaphoreHandle_t s_stop_signal;
 
 #define ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS 50
 
@@ -228,6 +231,42 @@ static void acquisition_sync_recording_state(void)
     }
 }
 
+/**
+ * @brief Sleep until the next fixed-phase deadline, or until a stop request.
+ *
+ * Stands in for xTaskDelayUntil(): with periods up to 5 s a stop request
+ * cannot wait out the delay. The wake-up comes from a semaphore rather than
+ * xTaskAbortDelay() on the task handle, because the semaphore is never freed
+ * under the caller and it latches a request made while this task is still
+ * busy with the current cycle -- an abort in that window would be lost.
+ *
+ * The period is re-read every cycle so a settings change applies to the next
+ * one.
+ */
+static void acquisition_wait_next_cycle(TickType_t *next_wake)
+{
+    const uint32_t period_ms = settings_service_get_acquisition_period_ms();
+    const TickType_t period_ticks = pdMS_TO_TICKS(period_ms);
+    *next_wake += period_ticks;
+
+    /* Unsigned difference: wrap-safe, and a deadline already in the past
+     * shows up as a value larger than one period. */
+    const TickType_t now = xTaskGetTickCount();
+    TickType_t remaining = *next_wake - now;
+    if (remaining > period_ticks) {
+        /* The cycle overran its period. Re-anchor the phase, otherwise the
+         * following waits would expire back-to-back trying to catch up and
+         * starve lower-priority tasks. */
+        *next_wake = now;
+        remaining = 0;
+        ESP_LOGW(TAG, "acquisition cycle overran the %" PRIu32 " ms period", period_ms);
+    }
+
+    /* Timing out is the normal path; taking the semaphore means a stop was
+     * requested, which the caller's loop condition picks up either way. */
+    (void)xSemaphoreTake(s_stop_signal, remaining);
+}
+
 static void acquisition_task(void *arg)
 {
     (void)arg;
@@ -276,19 +315,7 @@ static void acquisition_task(void *arg)
             ESP_LOGW(TAG, "Sample logging failed");
         }
 
-        /* xTaskDelayUntil() keeps a fixed phase: the period is measured from
-         * the previous wake-up, not from the end of the work, so the cycle
-         * time does not drift by however long acquisition+logging took.
-         * The period is re-read every cycle so a settings change applies to
-         * the next one. */
-        uint32_t period_ms = settings_service_get_acquisition_period_ms();
-        if (xTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(period_ms)) == pdFALSE) {
-            /* The deadline had already passed: the cycle overran its period.
-             * Re-anchor the phase, otherwise xTaskDelayUntil() would fire
-             * back-to-back trying to catch up and starve lower-priority tasks. */
-            last_wake_time = xTaskGetTickCount();
-            ESP_LOGW(TAG, "acquisition cycle overran the %" PRIu32 " ms period", period_ms);
-        }
+        acquisition_wait_next_cycle(&last_wake_time);
     }
 
     s_active = false;
@@ -312,6 +339,11 @@ esp_err_t acquisition_service_init(void)
     if (s_sample_mutex == NULL) {
         s_sample_mutex = xSemaphoreCreateMutex();
         ESP_RETURN_ON_FALSE(s_sample_mutex != NULL, ESP_ERR_NO_MEM, TAG, "failed to create sample mutex");
+    }
+
+    if (s_stop_signal == NULL) {
+        s_stop_signal = xSemaphoreCreateBinary();
+        ESP_RETURN_ON_FALSE(s_stop_signal != NULL, ESP_ERR_NO_MEM, TAG, "failed to create stop signal");
     }
 
     int record_enable_gpio = board_config_record_enable_gpio();
@@ -388,14 +420,20 @@ esp_err_t acquisition_service_start(void)
         return ESP_OK;
     }
 
+    /* Drop a stop signal left pending by the previous run -- given after the
+     * task had already left its loop -- or the first wait would return early. */
+    (void)xSemaphoreTake(s_stop_signal, 0);
+
     s_run_task = true;
+    TaskHandle_t task_handle = NULL;
     BaseType_t task_created = xTaskCreate(acquisition_task,
                                           ACQUISITION_TASK_NAME,
                                           ACQUISITION_TASK_STACK_SIZE,
                                           NULL,
                                           ACQUISITION_TASK_PRIORITY,
-                                          &s_task_handle);
+                                          &task_handle);
     ESP_RETURN_ON_FALSE(task_created == pdPASS, ESP_ERR_NO_MEM, TAG, "failed to create acquisition task");
+    s_task_handle = task_handle;
     return ESP_OK;
 }
 
@@ -408,6 +446,10 @@ esp_err_t acquisition_service_stop(void)
     }
 
     s_run_task = false;
+    /* Wake the task from its inter-cycle wait: the wait below then only covers
+     * the cycle in progress, not a whole acquisition period. A failed give
+     * just means a signal is already pending. */
+    (void)xSemaphoreGive(s_stop_signal);
     for (uint32_t retry = 0; retry < 60U && s_task_handle != NULL; ++retry) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
