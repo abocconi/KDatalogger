@@ -43,7 +43,6 @@ static bool s_use_max31855;
 static bool s_use_digital_inputs;
 static bool s_use_analog_inputs;
 static int s_record_enable_gpio = -1;
-static uint32_t s_sample_index;
 static kdl_sensor_sample_t s_last_sample;
 static kdl_sensor_extremes_t s_extremes;
 static SemaphoreHandle_t s_sample_mutex;
@@ -124,44 +123,6 @@ static analog_inputs_config_t acquisition_build_analog_input_config(void)
     return config;
 }
 
-static const char *acquisition_source_detail(void)
-{
-    if (s_use_max31855 && s_use_digital_inputs && s_use_analog_inputs) {
-        return "all_drivers";
-    }
-    if (!s_use_max31855 && !s_use_digital_inputs && !s_use_analog_inputs) {
-        return "stub_placeholder_pins";
-    }
-    return "mixed_sources";
-}
-
-static void acquisition_fill_stub_thermocouples(kdl_sensor_sample_t *sample)
-{
-    sample->thermocouple_valid_mask = (1U << DATA_MODEL_THERMOCOUPLE_COUNT) - 1U;
-
-    for (size_t index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
-        int32_t phase = (int32_t)((s_sample_index + (uint32_t)(index * 3U)) % 20U);
-        float offset = ((float)phase - 10.0f) * 0.25f;
-        sample->thermocouples_c[index] = 25.0f + ((float)index * 5.0f) + offset;
-    }
-}
-
-static void acquisition_fill_stub_analog_inputs(kdl_sensor_sample_t *sample)
-{
-    sample->analog_valid_mask = (1U << DATA_MODEL_ANALOG_INPUT_COUNT) - 1U;
-
-    for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
-        uint32_t phase = (s_sample_index * 17U + (uint32_t)index * 23U) % 100U;
-        sample->analog_inputs[index] = ((float)phase * 3.3f) / 100.0f;
-    }
-}
-
-static void acquisition_fill_stub_digital_inputs(kdl_sensor_sample_t *sample)
-{
-    sample->digital_valid_mask = 0x000000FFU;
-    sample->digital_inputs = s_sample_index & sample->digital_valid_mask;
-}
-
 static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
 {
     sample->thermocouple_valid_mask = 0;
@@ -199,8 +160,9 @@ static void acquisition_fill_digital_inputs(kdl_sensor_sample_t *sample)
 {
     esp_err_t err = digital_inputs_read(&sample->digital_inputs, &sample->digital_valid_mask);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Digital input read failed, using stub values: %s", esp_err_to_name(err));
-        acquisition_fill_stub_digital_inputs(sample);
+        ESP_LOGW(TAG, "Digital input read failed: %s", esp_err_to_name(err));
+        sample->digital_inputs = 0;
+        sample->digital_valid_mask = 0;
     }
 }
 
@@ -209,8 +171,6 @@ static void acquisition_fill_analog_inputs(kdl_sensor_sample_t *sample)
     uint32_t valid_mask = 0;
     esp_err_t err = analog_inputs_read(sample->analog_inputs, &valid_mask);
     if (err != ESP_OK) {
-        /* Mark every channel invalid rather than substituting stub values: a
-         * synthetic reading flagged valid would land in the log as real data. */
         ESP_LOGW(TAG, "Analog input read failed: %s", esp_err_to_name(err));
         sample->analog_valid_mask = 0;
         return;
@@ -224,22 +184,16 @@ static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
     memset(sample, 0, sizeof(*sample));
     sample->uptime_ms = acquisition_get_uptime_ms();
 
+    /* A group whose driver failed to start keeps the all-zero valid mask left
+     * by the memset above, so its channels read as invalid everywhere. */
     if (s_use_analog_inputs) {
         acquisition_fill_analog_inputs(sample);
-    } else {
-        acquisition_fill_stub_analog_inputs(sample);
     }
-
     if (s_use_max31855) {
         acquisition_fill_max31855_thermocouples(sample);
-    } else {
-        acquisition_fill_stub_thermocouples(sample);
     }
-
     if (s_use_digital_inputs) {
         acquisition_fill_digital_inputs(sample);
-    } else {
-        acquisition_fill_stub_digital_inputs(sample);
     }
 }
 
@@ -278,7 +232,7 @@ static void acquisition_task(void *arg)
 {
     (void)arg;
 
-    ESP_LOGI(TAG, "Acquisition task started (%s)", acquisition_source_detail());
+    ESP_LOGI(TAG, "Acquisition task started");
     s_active = true;
 
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -300,11 +254,10 @@ static void acquisition_task(void *arg)
         if (now_us - last_verbose_log_us >= ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US) {
             last_verbose_log_us = now_us;
             ESP_LOGI(TAG,
-                 "[%"PRIu64"ms] TC(C)[%s]: %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s"
-                 " | AI(V)[%s]: %.3f %.3f %.3f %.3f %.3f (mask=0x%02x)"
+                 "[%"PRIu64"ms] TC(C): %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s"
+                 " | AI(V): %.3f %.3f %.3f %.3f %.3f (mask=0x%02x)"
                  " | DI: 0x%02"PRIx32" (mask=0x%02"PRIx32")",
                  sample.uptime_ms,
-                 s_use_max31855 ? "MAX31855" : "stub",
                  sample.thermocouples_c[0], (sample.thermocouple_valid_mask & (1U << 0)) ? "*" : "!",
                  sample.thermocouples_c[1], (sample.thermocouple_valid_mask & (1U << 1)) ? "*" : "!",
                  sample.thermocouples_c[2], (sample.thermocouple_valid_mask & (1U << 2)) ? "*" : "!",
@@ -313,7 +266,6 @@ static void acquisition_task(void *arg)
                  sample.thermocouples_c[5], (sample.thermocouple_valid_mask & (1U << 5)) ? "*" : "!",
                  sample.thermocouples_c[6], (sample.thermocouple_valid_mask & (1U << 6)) ? "*" : "!",
                  sample.thermocouples_c[7], (sample.thermocouple_valid_mask & (1U << 7)) ? "*" : "!",
-                 s_use_analog_inputs ? "ADC" : "stub",
                  sample.analog_inputs[0], sample.analog_inputs[1], sample.analog_inputs[2],
                  sample.analog_inputs[3], sample.analog_inputs[4],
                  (unsigned)sample.analog_valid_mask,
@@ -323,7 +275,6 @@ static void acquisition_task(void *arg)
         if (logger_service_is_active() && logger_service_log_sample(&sample) != ESP_OK) {
             ESP_LOGW(TAG, "Sample logging failed");
         }
-        s_sample_index++;
 
         /* xTaskDelayUntil() keeps a fixed phase: the period is measured from
          * the previous wake-up, not from the end of the work, so the cycle
@@ -352,7 +303,6 @@ esp_err_t acquisition_service_init(void)
     s_initialized = true;
     s_run_task = false;
     s_active = false;
-    s_sample_index = 0;
     s_use_max31855 = false;
     s_use_digital_inputs = false;
     s_use_analog_inputs = false;
@@ -387,11 +337,12 @@ esp_err_t acquisition_service_init(void)
 
     max31855_config_t max31855_config = acquisition_build_max31855_config();
     if (!board_config_max31855_has_valid_pins() || !max31855_has_valid_pins(&max31855_config)) {
-        ESP_LOGI(TAG, "MAX31855 pins not configured yet, acquisition will use stub thermocouples");
+        ESP_LOGE(TAG, "MAX31855 pins not configured, thermocouples will read as invalid");
     } else {
         esp_err_t thermocouple_err = max31855_init(&max31855_config);
         if (thermocouple_err != ESP_OK) {
-            ESP_LOGW(TAG, "MAX31855 init failed, keeping stub thermocouples: %s", esp_err_to_name(thermocouple_err));
+            ESP_LOGE(TAG, "MAX31855 init failed, thermocouples will read as invalid: %s",
+                     esp_err_to_name(thermocouple_err));
         } else {
             s_use_max31855 = true;
             ESP_LOGI(TAG, "MAX31855 driver enabled for thermocouple acquisition");
@@ -400,11 +351,12 @@ esp_err_t acquisition_service_init(void)
 
     digital_inputs_config_t digital_config = acquisition_build_digital_input_config();
     if (!board_config_digital_inputs_has_valid_pins() || !digital_inputs_has_valid_pins(&digital_config)) {
-        ESP_LOGI(TAG, "Digital input pins not configured yet, acquisition will use stub digital values");
+        ESP_LOGE(TAG, "Digital input pins not configured, digital inputs will read as invalid");
     } else {
         esp_err_t digital_err = digital_inputs_init(&digital_config);
         if (digital_err != ESP_OK) {
-            ESP_LOGW(TAG, "Digital input init failed, keeping stub digital values: %s", esp_err_to_name(digital_err));
+            ESP_LOGE(TAG, "Digital input init failed, digital inputs will read as invalid: %s",
+                     esp_err_to_name(digital_err));
         } else {
             s_use_digital_inputs = true;
             ESP_LOGI(TAG, "Digital input driver enabled");
@@ -413,13 +365,14 @@ esp_err_t acquisition_service_init(void)
 
     analog_inputs_config_t analog_config = acquisition_build_analog_input_config();
     if (!board_config_analog_inputs_has_valid_pins() || !analog_inputs_has_valid_pins(&analog_config)) {
-        ESP_LOGI(TAG, "Analog input pins not configured yet, acquisition will use stub analog values");
+        ESP_LOGE(TAG, "Analog input pins not configured, analog inputs will read as invalid");
         return ESP_OK;
     }
 
     esp_err_t analog_err = analog_inputs_init(&analog_config);
     if (analog_err != ESP_OK) {
-        ESP_LOGW(TAG, "Analog input init failed, keeping stub analog values: %s", esp_err_to_name(analog_err));
+        ESP_LOGE(TAG, "Analog input init failed, analog inputs will read as invalid: %s",
+                 esp_err_to_name(analog_err));
         return ESP_OK;
     }
 
