@@ -164,7 +164,7 @@ static void page_datetime_timeout_cb(lv_timer_t *timer)
 static lv_obj_t *page_datetime_separator(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *label = lv_label_create(parent);
-    lv_obj_set_style_text_font(label, KDL_FONT_VALUE, 0);
+    lv_obj_set_style_text_font(label, KDL_FONT_NUM_XL, 0);
     lv_obj_set_style_text_color(label, KDL_COLOR_INK_FAINT, 0);
     lv_label_set_text(label, text);
     return label;
@@ -173,7 +173,7 @@ static lv_obj_t *page_datetime_separator(lv_obj_t *parent, const char *text)
 static lv_obj_t *page_datetime_field(lv_obj_t *parent, uint8_t index)
 {
     lv_obj_t *label = lv_label_create(parent);
-    lv_obj_set_style_text_font(label, KDL_FONT_VALUE, 0);
+    lv_obj_set_style_text_font(label, KDL_FONT_NUM_XL, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_size(label, s_field_widths[index], PAGE_DATETIME_FIELD_ROW_H);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);

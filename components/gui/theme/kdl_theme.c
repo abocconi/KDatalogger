@@ -3,24 +3,12 @@
 lv_style_t kdl_style_screen;
 lv_style_t kdl_style_statusbar;
 lv_style_t kdl_style_panel;
-lv_style_t kdl_style_card;
-lv_style_t kdl_style_cell;
+lv_style_t kdl_style_tile;
 lv_style_t kdl_style_rail;
+lv_style_t kdl_style_keycap;
 lv_style_t kdl_style_row;
 lv_style_t kdl_style_row_sel;
 lv_style_t kdl_style_alert;
-
-lv_font_t kdl_font_28;
-lv_font_t kdl_font_20;
-lv_font_t kdl_font_14;
-lv_font_t kdl_font_12;
-lv_font_t kdl_font_10;
-
-LV_FONT_DECLARE(kdl_font_accents_28)
-LV_FONT_DECLARE(kdl_font_accents_20)
-LV_FONT_DECLARE(kdl_font_accents_14)
-LV_FONT_DECLARE(kdl_font_accents_12)
-LV_FONT_DECLARE(kdl_font_accents_10)
 
 static bool s_initialized;
 
@@ -48,25 +36,12 @@ static void kdl_style_reset_container(lv_style_t *style)
     lv_style_set_shadow_width(style, 0);
 }
 
-/** Copy a const built-in face into RAM so it can take a fallback. */
-static void kdl_font_chain(lv_font_t *out, const lv_font_t *builtin, const lv_font_t *accents)
-{
-    *out = *builtin;
-    out->fallback = accents;
-}
-
 void kdl_theme_init(void)
 {
     if (s_initialized)
     {
         return;
     }
-
-    kdl_font_chain(&kdl_font_28, &lv_font_montserrat_28, &kdl_font_accents_28);
-    kdl_font_chain(&kdl_font_20, &lv_font_montserrat_20, &kdl_font_accents_20);
-    kdl_font_chain(&kdl_font_14, &lv_font_montserrat_14, &kdl_font_accents_14);
-    kdl_font_chain(&kdl_font_12, &lv_font_montserrat_12, &kdl_font_accents_12);
-    kdl_font_chain(&kdl_font_10, &lv_font_montserrat_10, &kdl_font_accents_10);
 
     lv_style_init(&kdl_style_screen);
     kdl_style_reset_container(&kdl_style_screen);
@@ -87,35 +62,33 @@ void kdl_theme_init(void)
     lv_style_set_pad_left(&kdl_style_statusbar, 8);
     lv_style_set_pad_right(&kdl_style_statusbar, 8);
 
-    lv_style_init(&kdl_style_card);
-    kdl_style_reset_container(&kdl_style_card);
-    lv_style_set_bg_color(&kdl_style_card, KDL_COLOR_CARD);
-    lv_style_set_bg_opa(&kdl_style_card, LV_OPA_COVER);
-    lv_style_set_border_color(&kdl_style_card, KDL_COLOR_INK);
-    lv_style_set_border_width(&kdl_style_card, 1);
-    lv_style_set_pad_left(&kdl_style_card, 4);
-    lv_style_set_pad_right(&kdl_style_card, 4);
-    lv_style_set_pad_top(&kdl_style_card, 2);
-    lv_style_set_pad_bottom(&kdl_style_card, 2);
-
-    lv_style_init(&kdl_style_cell);
-    kdl_style_reset_container(&kdl_style_cell);
-    lv_style_set_bg_color(&kdl_style_cell, KDL_COLOR_SURFACE);
-    lv_style_set_bg_opa(&kdl_style_cell, LV_OPA_COVER);
-    lv_style_set_border_color(&kdl_style_cell, KDL_COLOR_INK);
-    lv_style_set_border_width(&kdl_style_cell, 1);
-    lv_style_set_pad_left(&kdl_style_cell, 4);
-    lv_style_set_pad_right(&kdl_style_cell, 4);
-    lv_style_set_pad_top(&kdl_style_cell, 2);
-    lv_style_set_pad_bottom(&kdl_style_cell, 2);
+    lv_style_init(&kdl_style_tile);
+    kdl_style_reset_container(&kdl_style_tile);
+    lv_style_set_bg_color(&kdl_style_tile, KDL_COLOR_CARD);
+    lv_style_set_bg_opa(&kdl_style_tile, LV_OPA_COVER);
+    lv_style_set_border_color(&kdl_style_tile, KDL_COLOR_BORDER);
+    lv_style_set_border_width(&kdl_style_tile, 1);
+    lv_style_set_radius(&kdl_style_tile, 3);
 
     lv_style_init(&kdl_style_rail);
     kdl_style_reset_container(&kdl_style_rail);
     lv_style_set_bg_color(&kdl_style_rail, KDL_COLOR_RAIL);
     lv_style_set_bg_opa(&kdl_style_rail, LV_OPA_COVER);
-    lv_style_set_border_color(&kdl_style_rail, KDL_COLOR_INK);
+    lv_style_set_border_color(&kdl_style_rail, KDL_COLOR_BORDER);
     lv_style_set_border_width(&kdl_style_rail, 1);
     lv_style_set_border_side(&kdl_style_rail, LV_BORDER_SIDE_LEFT);
+
+    lv_style_init(&kdl_style_keycap);
+    kdl_style_reset_container(&kdl_style_keycap);
+    lv_style_set_bg_color(&kdl_style_keycap, KDL_COLOR_CARD);
+    lv_style_set_bg_opa(&kdl_style_keycap, LV_OPA_COVER);
+    lv_style_set_border_color(&kdl_style_keycap, KDL_COLOR_KEY_BORDER);
+    lv_style_set_border_width(&kdl_style_keycap, 1);
+    lv_style_set_radius(&kdl_style_keycap, 4);
+    /* Leaves 53 px for the label in the 86 px rail; the widest key label,
+     * "Indietro" in 14 px Barlow SemiBold, measures 48.6 px. */
+    lv_style_set_pad_right(&kdl_style_keycap, 6);
+    lv_style_set_pad_column(&kdl_style_keycap, 5);
 
     lv_style_init(&kdl_style_row);
     kdl_style_reset_container(&kdl_style_row);

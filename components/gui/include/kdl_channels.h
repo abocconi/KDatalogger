@@ -12,8 +12,9 @@
  *
  * Id, name and unit come from data_model_channels.h, shared with the log
  * file. What is added here is display-only: full-scale and threshold values
- * feed the card fill bar and the value colour; they are calibration knobs,
- * not physical limits.
+ * feed the fill bars, their zone bands and the state colours; they are
+ * calibration knobs, not physical limits. Channels 1-4 share one axis on the
+ * main page, so keep their three values identical.
  */
 
 /** @brief Analog channels rendered on the main page (IN2..IN6).
@@ -28,8 +29,8 @@
 typedef struct {
     const kdl_channel_info_t *channel; /**< Shared id/name/unit              */
     float full_scale;      /**< Fill-bar 100 % point, in the channel's unit  */
-    float warn_threshold;  /**< Value colour turns amber at or above this    */
-    float alarm_threshold; /**< Value colour turns red at or above this      */
+    float warn_threshold;  /**< Amber from here up; start of the warning band */
+    float alarm_threshold; /**< Red from here up; start of the alarm band     */
 } kdl_thermocouple_desc_t;
 
 typedef struct {
@@ -57,7 +58,7 @@ const kdl_analog_desc_t *kdl_channels_analog(uint8_t index);
  * @brief Shared unit suffix for every thermocouple channel.
  *
  * The MAX31855 is a Type K part, so the unit is fixed at compile time; the
- * degree sign is present in LVGL's built-in Montserrat faces.
+ * degree sign is present in the text fonts (see kdl_theme.h).
  */
 const char *kdl_channels_temperature_unit(void);
 

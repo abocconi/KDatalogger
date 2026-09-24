@@ -8,13 +8,15 @@
  *
  * Kept in one place so the wording can be reviewed and changed without
  * touching page code, and so a second language would only need a second
- * table. The file is UTF-8: beyond ASCII the fonts carry only the degree
- * sign, the bullet, the LV_SYMBOL_* set and the Italian accented vowels
- * (see kdl_theme.h) -- any other character renders as nothing.
+ * table. The file is UTF-8: beyond ASCII the text fonts carry only the
+ * Italian accented vowels, ° · • Δ — and the LV_SYMBOL_* glyphs listed in
+ * tools/gen_fonts.py (see kdl_theme.h) -- any other character renders as
+ * nothing. Readings use the numeric fonts, which carry far less.
  *
- * Space budget, measured in the built-in Montserrat faces: key labels about
- * 60 px in 14 px (8-9 characters), status bar title in 10 px, body texts
- * within their boxes (~360 px in 12 px).
+ * Space budget: key labels about 60 px in 14 px (8-9 characters), status bar
+ * title in 10 px, body texts within their boxes (~360 px in 12 px). These
+ * were measured in Montserrat, which is wider than the Barlow faces now in
+ * use, so they hold with margin.
  *
  * Channel names are not here: they live in data_model_channels.c, shared
  * with the log file.
@@ -34,12 +36,20 @@
 #define KDL_TXT_KEY_PLUS            "+"
 #define KDL_TXT_KEY_MINUS           "-"
 
-/* -- Main page -------------------------------------------------------------
- * U+2022 BULLET and U+00B0 DEGREE SIGN, both in the built-in faces. The unit
- * lives in the title because it does not fit on the cards themselves.      */
-#define KDL_TXT_MAIN_TITLE          "LIVE \xE2\x80\xA2 \xC2\xB0" "C"
+/* -- Main page ------------------------------------------------------------ */
+#define KDL_TXT_MAIN_TITLE          "LIVE"
 #define KDL_TXT_KEY_GRAPH           "Grafico"
 #define KDL_TXT_KEY_SETTINGS        "Impost."
+/** Cylinder bank heading; the degree sign is U+00B0. */
+#define KDL_TXT_MAIN_EXHAUST        "SCARICO \xC2\xB0" "C"
+/** U+0394 GREEK CAPITAL DELTA: spread between hottest and coolest cylinder. */
+#define KDL_TXT_MAIN_SPREAD         "\xCE\x94"
+/** Reading of an unplugged probe: U+2014 EM DASH, present in the num fonts. */
+#define KDL_TXT_VALUE_OPEN          "\xE2\x80\x94"
+#define KDL_TXT_PROBE_OPEN          "sonda scollegata"
+/** printf format, two %d: session minimum and maximum. U+00B7 MIDDLE DOT. */
+#define KDL_TXT_EXTREMES_FMT        "min %d \xC2\xB7 max %d"
+#define KDL_TXT_EXTREMES_NONE       "min -- \xC2\xB7 max --"
 
 /* -- Graph page ------------------------------------------------------------ */
 #define KDL_TXT_GRAPH_TITLE         "GRAFICO"

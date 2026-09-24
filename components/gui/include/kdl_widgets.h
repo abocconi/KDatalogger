@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdint.h>
+
+#include "esp_err.h"
 #include "lvgl.h"
 
 #include "acquisition_service.h"
@@ -11,55 +14,117 @@
  * @brief Composite readout widgets shared by the KDatalogger pages.
  *
  * Each widget separates its static skeleton (built once in _create) from the
- * few labels that change (rewritten in _update, and only when the rendered
- * text actually differs). Every child has a fixed size, so an update never
- * reflows the parent and the invalidated region stays limited to the glyphs
- * that changed -- the difference between a 4 ms and a 32 ms refresh of the
- * main page.
+ * few objects that change (touched in _update, and only when what they show
+ * actually differs). Every child sits at a fixed pixel position inside a
+ * fixed-size parent, so an update never reflows anything and the invalidated
+ * region stays limited to the glyphs or bar segment that changed -- the
+ * difference between a 4 ms and a 32 ms refresh of the main page. State
+ * colours are applied only when the alarm level changes: setting a local
+ * style invalidates the object even when the value is the same.
  */
 
-/** @brief One thermocouple readout: name, reading, fill bar, session extremes. */
+/** @brief Cylinder columns in a bank. */
+#define KDL_CYL_BANK_COUNT 4U
+
+/** @brief Alarm level of a reading; drives every state colour. */
+typedef enum {
+    KDL_LEVEL_UNSET = 0, /**< Nothing applied yet: forces the first repaint  */
+    KDL_LEVEL_OK,
+    KDL_LEVEL_WARN,      /**< At or above the channel's warn threshold       */
+    KDL_LEVEL_ALARM,     /**< At or above the channel's alarm threshold      */
+    KDL_LEVEL_FAULT,     /**< No usable reading: open probe or MAX31855 fault */
+} kdl_level_t;
+
+/** @brief One cylinder column: reading, zoned vertical bar, session peak. */
 typedef struct {
     lv_obj_t *root;
     lv_obj_t *value;
-    lv_obj_t *bar_fill;
-    lv_obj_t *extremes;
+    lv_obj_t *fill;
+    lv_obj_t *peak;
     const kdl_thermocouple_desc_t *desc;
-    int32_t bar_percent; /**< Last applied fill width, to skip redundant writes */
-} kdl_probe_card_t;
+    uint8_t channel;
+    kdl_level_t level;
+    int32_t fill_h; /**< Last applied fill height, px; -1 = none yet  */
+    int32_t peak_y; /**< Last applied peak marker y, px; -1 = hidden  */
+} kdl_cyl_column_t;
+
+/**
+ * @brief Side-by-side exhaust temperatures on one shared scale, so an
+ *        imbalance between cylinders reads as a difference in bar height.
+ */
+typedef struct {
+    lv_obj_t *root;
+    lv_obj_t *spread;
+    int32_t track_h;
+    kdl_cyl_column_t columns[KDL_CYL_BANK_COUNT];
+} kdl_cyl_bank_t;
+
+/** @brief One thermocouple tile: name, extremes, reading, zoned bar. */
+typedef struct {
+    lv_obj_t *root;
+    lv_obj_t *value;
+    lv_obj_t *extremes;
+    lv_obj_t *fill;
+    const kdl_thermocouple_desc_t *desc;
+    uint8_t channel;
+    kdl_level_t level;
+    int32_t track_w;
+    int32_t fill_w; /**< Last applied fill width, px; -1 = none yet */
+} kdl_fluid_tile_t;
 
 /** @brief One analog readout: name and scaled reading with its unit. */
 typedef struct {
     lv_obj_t *root;
     lv_obj_t *value;
     const kdl_analog_desc_t *desc;
+    int8_t valid; /**< Last applied validity; -1 = none yet */
 } kdl_analog_cell_t;
 
 /**
- * @brief Build a thermocouple card under @p parent.
+ * @brief Build a cylinder bank from thermocouple channels
+ *        @p first_channel .. @p first_channel + KDL_CYL_BANK_COUNT - 1.
  *
- * @param card   Receives the widget handles; owned by the caller.
- * @param desc   Channel descriptor, kept by reference for the widget's life.
+ * The axis is labelled from the first channel's scale; every channel should
+ * share it, and a mismatch is logged.
+ *
+ * @return ESP_ERR_INVALID_ARG on a NULL argument, a channel out of range,
+ *         inconsistent thresholds or a size too small for the layout.
  */
-void kdl_probe_card_create(kdl_probe_card_t *card, lv_obj_t *parent,
-                           const kdl_thermocouple_desc_t *desc,
-                           int32_t width, int32_t height);
+esp_err_t kdl_cyl_bank_create(kdl_cyl_bank_t *bank, lv_obj_t *parent, uint8_t first_channel,
+                              int32_t width, int32_t height);
 
 /**
- * @brief Refresh a thermocouple card from the latest sample.
+ * @brief Refresh a cylinder bank from the latest sample.
  *
- * @param extremes May be NULL, in which case the min/max line is left blank.
- * @param index    Thermocouple channel index this card renders.
+ * @param extremes May be NULL, in which case the peak markers are hidden.
  */
-void kdl_probe_card_update(kdl_probe_card_t *card,
-                           const kdl_sensor_sample_t *sample,
-                           const kdl_sensor_extremes_t *extremes,
-                           uint8_t index);
+void kdl_cyl_bank_update(kdl_cyl_bank_t *bank, const kdl_sensor_sample_t *sample,
+                         const kdl_sensor_extremes_t *extremes);
 
-/** @brief Build an analog cell under @p parent. */
-void kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
-                            const kdl_analog_desc_t *desc,
-                            int32_t width, int32_t height);
+/**
+ * @brief Build a thermocouple tile for @p channel.
+ *
+ * @return ESP_ERR_INVALID_ARG on a NULL argument, a channel out of range,
+ *         inconsistent thresholds or a size too small for the layout.
+ */
+esp_err_t kdl_fluid_tile_create(kdl_fluid_tile_t *tile, lv_obj_t *parent, uint8_t channel,
+                                int32_t width, int32_t height);
+
+/**
+ * @brief Refresh a thermocouple tile from the latest sample.
+ *
+ * @param extremes May be NULL, in which case the min/max line shows dashes.
+ */
+void kdl_fluid_tile_update(kdl_fluid_tile_t *tile, const kdl_sensor_sample_t *sample,
+                           const kdl_sensor_extremes_t *extremes);
+
+/**
+ * @brief Build an analog cell under @p parent.
+ *
+ * @return ESP_ERR_INVALID_ARG on a NULL argument or a size too small.
+ */
+esp_err_t kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
+                                 const kdl_analog_desc_t *desc, int32_t width, int32_t height);
 
 /** @brief Refresh an analog cell from the latest sample. */
 void kdl_analog_cell_update(kdl_analog_cell_t *cell, const kdl_sensor_sample_t *sample);

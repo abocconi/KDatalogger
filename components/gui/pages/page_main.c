@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "esp_log.h"
+
 #include "acquisition_service.h"
 #include "data_model.h"
 #include "kdl_channels.h"
@@ -11,78 +13,94 @@
 
 /*
  * Main page geometry, derived from the content box the page manager hands
- * over (394 x 294) rather than from percentages, so every card lands on a
- * known pixel and a value change can never reflow the grid.
+ * over (394 x 294) rather than from percentages, so every widget lands on a
+ * known pixel and a value change can never reflow the page.
  *
- *   inner width  = 394 - 2 * PAD = 382
- *   inner height = 294 - 2 * PAD = 282 = TC grid (221) + GAP (5) + analog (56)
- *   TC grid      = 2 rows of 108 with one 5 px row gap
- *   TC columns   = 4 cards of 92 with three 4 px gaps = 380
- *   analog row   = 5 cells of 73 with four 4 px gaps  = 381
+ *   inner box    = 394 x 294 minus PAD on each side = 382 x 282
+ *   top band     = cylinder bank (186) + GAP (6) + tile column (190) = 382
+ *   tile column  = 4 tiles of 52 with three 4 px gaps = 220 of 221
+ *   height       = top band (221) + ROW_GAP (5) + analog row (56) = 282
+ *   analog row   = 5 cells of 73 with four 4 px gaps = 381
  *
- * At 73 px the analog cell has 63 inner pixels: the widest header,
- * "IN3" + "P IC out" in Montserrat 10, measures ~60 px, and "3.30" in
- * Montserrat 20 plus the "V" suffix ~51 px.
+ * Thermocouples 1-4 (cylinder exhaust) go to the bank, which puts them on
+ * one scale side by side; 5-8 (intercooler, oil, coolant) get a tile each.
  */
 #define PAGE_MAIN_PAD            6
-#define PAGE_MAIN_COL_GAP        4
+#define PAGE_MAIN_GAP            6
 #define PAGE_MAIN_ROW_GAP        5
 #define PAGE_MAIN_INNER_W        382
 #define PAGE_MAIN_INNER_H        282
-#define PAGE_MAIN_CARD_W         92
-#define PAGE_MAIN_CARD_H         108
+#define PAGE_MAIN_TOP_H          221
+#define PAGE_MAIN_BANK_W         186
+#define PAGE_MAIN_TILE_W         190
+#define PAGE_MAIN_TILE_H         52
+#define PAGE_MAIN_TILE_GAP       4
+#define PAGE_MAIN_TILE_COUNT     4U
 #define PAGE_MAIN_ANALOG_H       56
-#define PAGE_MAIN_ANALOG_CELL_W  73
-#define PAGE_MAIN_TC_GRID_H      (2 * PAGE_MAIN_CARD_H + PAGE_MAIN_ROW_GAP)
+#define PAGE_MAIN_CELL_W         73
+#define PAGE_MAIN_CELL_GAP       4
 
-_Static_assert(PAGE_MAIN_TC_GRID_H + PAGE_MAIN_ROW_GAP + PAGE_MAIN_ANALOG_H
-                   == PAGE_MAIN_INNER_H,
+_Static_assert(PAGE_MAIN_BANK_W + PAGE_MAIN_GAP + PAGE_MAIN_TILE_W == PAGE_MAIN_INNER_W,
+               "top band does not fill the content width exactly");
+_Static_assert(PAGE_MAIN_TILE_COUNT * PAGE_MAIN_TILE_H
+                   + (PAGE_MAIN_TILE_COUNT - 1U) * PAGE_MAIN_TILE_GAP <= PAGE_MAIN_TOP_H,
+               "tile column overflows the top band");
+_Static_assert(PAGE_MAIN_TOP_H + PAGE_MAIN_ROW_GAP + PAGE_MAIN_ANALOG_H == PAGE_MAIN_INNER_H,
                "main page bands do not fill the content box exactly");
-_Static_assert(4 * PAGE_MAIN_CARD_W + 3 * PAGE_MAIN_COL_GAP <= PAGE_MAIN_INNER_W,
-               "four cards per row overflow the content width");
-_Static_assert(KDL_THERMOCOUPLE_DISPLAY_COUNT == 8,
-               "thermocouple grid is laid out as 4 columns by 2 rows");
+_Static_assert(KDL_THERMOCOUPLE_DISPLAY_COUNT == KDL_CYL_BANK_COUNT + PAGE_MAIN_TILE_COUNT,
+               "thermocouples are laid out as one 4-cylinder bank plus 4 tiles");
 _Static_assert(KDL_ANALOG_DISPLAY_COUNT == 5,
                "analog row is laid out as a single row of 5 cells");
-_Static_assert(5 * PAGE_MAIN_ANALOG_CELL_W + 4 * PAGE_MAIN_COL_GAP <= PAGE_MAIN_INNER_W,
+_Static_assert(5 * PAGE_MAIN_CELL_W + 4 * PAGE_MAIN_CELL_GAP <= PAGE_MAIN_INNER_W,
                "five analog cells overflow the content width");
 
-static kdl_probe_card_t s_cards[KDL_THERMOCOUPLE_DISPLAY_COUNT];
+static const char *TAG = "page_main";
+
+static kdl_cyl_bank_t s_bank;
+static kdl_fluid_tile_t s_tiles[PAGE_MAIN_TILE_COUNT];
 static kdl_analog_cell_t s_cells[KDL_ANALOG_DISPLAY_COUNT];
 static uint64_t s_last_sample_uptime_ms = UINT64_MAX;
-
-static lv_obj_t *page_main_band(lv_obj_t *parent, int32_t height)
-{
-    lv_obj_t *band = lv_obj_create(parent);
-    lv_obj_add_style(band, &kdl_style_panel, 0);
-    lv_obj_set_size(band, PAGE_MAIN_INNER_W, height);
-    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(band, PAGE_MAIN_COL_GAP, 0);
-    lv_obj_set_style_pad_row(band, PAGE_MAIN_ROW_GAP, 0);
-    return band;
-}
 
 static void on_show(lv_obj_t *content)
 {
     lv_obj_set_style_pad_all(content, PAGE_MAIN_PAD, 0);
-    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(content, PAGE_MAIN_ROW_GAP, 0);
 
     s_last_sample_uptime_ms = UINT64_MAX;
 
-    lv_obj_t *grid = page_main_band(content, PAGE_MAIN_TC_GRID_H);
-    for (uint8_t index = 0; index < KDL_THERMOCOUPLE_DISPLAY_COUNT; ++index)
+    /* A widget that fails to build keeps a NULL root, which its _update
+     * treats as absent: the rest of the page still works. */
+    esp_err_t err = kdl_cyl_bank_create(&s_bank, content, 0, PAGE_MAIN_BANK_W, PAGE_MAIN_TOP_H);
+    if (err != ESP_OK)
     {
-        kdl_probe_card_create(&s_cards[index], grid, kdl_channels_thermocouple(index),
-                              PAGE_MAIN_CARD_W, PAGE_MAIN_CARD_H);
+        ESP_LOGE(TAG, "cylinder bank: %s", esp_err_to_name(err));
     }
 
-    lv_obj_t *analog = page_main_band(content, PAGE_MAIN_ANALOG_H);
+    for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
+    {
+        err = kdl_fluid_tile_create(&s_tiles[index], content,
+                                    (uint8_t)(KDL_CYL_BANK_COUNT + index),
+                                    PAGE_MAIN_TILE_W, PAGE_MAIN_TILE_H);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "tile %u: %s", (unsigned)index, esp_err_to_name(err));
+            continue;
+        }
+        lv_obj_set_pos(s_tiles[index].root, PAGE_MAIN_BANK_W + PAGE_MAIN_GAP,
+                       (int32_t)index * (PAGE_MAIN_TILE_H + PAGE_MAIN_TILE_GAP));
+    }
+
     for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
     {
-        kdl_analog_cell_create(&s_cells[index], analog, kdl_channels_analog(index),
-                               PAGE_MAIN_ANALOG_CELL_W, PAGE_MAIN_ANALOG_H);
+        err = kdl_analog_cell_create(&s_cells[index], content, kdl_channels_analog(index),
+                                     PAGE_MAIN_CELL_W, PAGE_MAIN_ANALOG_H);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "analog cell %u: %s", (unsigned)index, esp_err_to_name(err));
+            continue;
+        }
+        lv_obj_set_pos(s_cells[index].root,
+                       (int32_t)index * (PAGE_MAIN_CELL_W + PAGE_MAIN_CELL_GAP),
+                       PAGE_MAIN_TOP_H + PAGE_MAIN_ROW_GAP);
     }
 }
 
@@ -90,9 +108,10 @@ static void on_hide(void)
 {
     /* The page manager destroys the content subtree; drop the dangling
      * handles so a late update cannot touch freed objects. */
-    for (uint8_t index = 0; index < KDL_THERMOCOUPLE_DISPLAY_COUNT; ++index)
+    s_bank.root = NULL;
+    for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
     {
-        s_cards[index].root = NULL;
+        s_tiles[index].root = NULL;
     }
     for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
     {
@@ -110,8 +129,8 @@ static void on_tick(void)
     }
 
     /* The GUI ticks faster than the acquisition period, so most ticks carry
-     * the sample already on screen. Redrawing it would repaint eight cards
-     * for nothing. */
+     * the sample already on screen. Redrawing it would repaint the whole
+     * page for nothing. */
     if (sample.uptime_ms == s_last_sample_uptime_ms)
     {
         return;
@@ -121,9 +140,11 @@ static void on_tick(void)
     kdl_sensor_extremes_t extremes;
     const bool have_extremes = acquisition_service_get_extremes(&extremes) == ESP_OK;
 
-    for (uint8_t index = 0; index < KDL_THERMOCOUPLE_DISPLAY_COUNT; ++index)
+    const kdl_sensor_extremes_t *extremes_or_null = have_extremes ? &extremes : NULL;
+    kdl_cyl_bank_update(&s_bank, &sample, extremes_or_null);
+    for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
     {
-        kdl_probe_card_update(&s_cards[index], &sample, have_extremes ? &extremes : NULL, index);
+        kdl_fluid_tile_update(&s_tiles[index], &sample, extremes_or_null);
     }
     for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
     {

@@ -156,7 +156,7 @@ static void page_usb_build_header(lv_obj_t *parent)
                           LV_FLEX_ALIGN_START);
 
     lv_obj_t *title = lv_label_create(text);
-    lv_obj_set_style_text_font(title, KDL_FONT_VALUE_SM, 0);
+    lv_obj_set_style_text_font(title, KDL_FONT_TITLE, 0);
     lv_label_set_text(title, KDL_TXT_USB_HEADER);
 
     lv_obj_t *subtitle = lv_label_create(text);

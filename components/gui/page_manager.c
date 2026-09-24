@@ -34,6 +34,9 @@ _Static_assert(PAGE_MANAGER_CLOCK_H > 0,
                "key slots overflow the body: reduce PAGE_MANAGER_KEY_CELL_H");
 
 #define PAGE_MANAGER_REC_DOT_SIZE 8
+#define PAGE_MANAGER_ELAPSED_W   56   /* "00:00:00" in the 16 px tabular num face */
+#define PAGE_MANAGER_KEY_INSET_X 5    /* Key cap inset inside its 50 px slot      */
+#define PAGE_MANAGER_KEY_INSET_Y 5
 #define PAGE_MANAGER_CLOCK_TEXT_LEN 8   /* "HH:MM"    */
 #define PAGE_MANAGER_DATE_TEXT_LEN 12   /* "DD.MM.YY" */
 #define PAGE_MANAGER_ELAPSED_TEXT_LEN 12 /* "HH:MM:SS" */
@@ -48,9 +51,8 @@ static lv_obj_t *s_elapsed_label;
 static lv_obj_t *s_title_label;
 static lv_obj_t *s_clock_label;
 static lv_obj_t *s_date_label;
-static lv_obj_t *s_key_slots[PAGE_MANAGER_BUTTON_COUNT];
+static lv_obj_t *s_key_caps[PAGE_MANAGER_BUTTON_COUNT];
 static lv_obj_t *s_key_labels[PAGE_MANAGER_BUTTON_COUNT];
-static lv_obj_t *s_key_ticks[PAGE_MANAGER_BUTTON_COUNT];
 
 static const gui_page_t *s_current_page;
 static const char *s_label_override[PAGE_MANAGER_BUTTON_COUNT];
@@ -91,7 +93,7 @@ static void page_manager_build_statusbar(lv_obj_t *parent)
     lv_obj_add_style(bar, &kdl_style_statusbar, 0);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(bar, 8, 0);
+    lv_obj_set_style_pad_column(bar, 6, 0);
 
     s_rec_dot = lv_obj_create(bar);
     lv_obj_add_style(s_rec_dot, &kdl_style_panel, 0);
@@ -106,10 +108,12 @@ static void page_manager_build_statusbar(lv_obj_t *parent)
     lv_label_set_text(s_rec_label, KDL_TXT_STATUS_REC);
 
     s_elapsed_label = lv_label_create(bar);
-    lv_obj_set_style_text_font(s_elapsed_label, KDL_FONT_BODY, 0);
-    /* Fixed width: the proportional Montserrat digits would otherwise resize
-     * the label every second and reflow the whole status bar. */
-    lv_obj_set_width(s_elapsed_label, 70);
+    lv_obj_set_style_text_font(s_elapsed_label, KDL_FONT_NUM_S, 0);
+    lv_obj_set_style_pad_left(s_elapsed_label, 2, 0);
+    /* Fixed width: the digits are tabular, but "FERMO" and "ERRORE LOG" in
+     * the label before it still change length, and a content-sized label
+     * would reflow the whole status bar. */
+    lv_obj_set_width(s_elapsed_label, PAGE_MANAGER_ELAPSED_W);
     lv_label_set_long_mode(s_elapsed_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(s_elapsed_label, "00:00:00");
 
@@ -118,7 +122,8 @@ static void page_manager_build_statusbar(lv_obj_t *parent)
 
     s_title_label = lv_label_create(bar);
     lv_obj_set_style_text_font(s_title_label, KDL_FONT_MICRO, 0);
-    lv_obj_set_style_text_color(s_title_label, KDL_COLOR_RAIL, 0);
+    lv_obj_set_style_text_color(s_title_label, KDL_COLOR_STATUS_CAPTION, 0);
+    lv_obj_set_style_text_letter_space(s_title_label, 2, 0);
     lv_label_set_long_mode(s_title_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(s_title_label, "");
 }
@@ -126,17 +131,15 @@ static void page_manager_build_statusbar(lv_obj_t *parent)
 static void page_manager_build_clock_block(lv_obj_t *rail)
 {
     lv_obj_t *block = page_manager_create_box(rail, lv_pct(100), PAGE_MANAGER_CLOCK_H);
-    lv_obj_set_style_bg_color(block, KDL_COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_opa(block, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(block, KDL_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(block, 1, 0);
     lv_obj_set_style_border_side(block, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_pad_right(block, 6, 0);
+    lv_obj_set_style_pad_right(block, 8, 0);
     lv_obj_set_flex_flow(block, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(block, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
 
     s_clock_label = lv_label_create(block);
-    lv_obj_set_style_text_font(s_clock_label, KDL_FONT_VALUE_SM, 0);
+    lv_obj_set_style_text_font(s_clock_label, KDL_FONT_NUM_M, 0);
     lv_obj_set_style_text_align(s_clock_label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_long_mode(s_clock_label, LV_LABEL_LONG_CLIP);
     lv_label_set_text(s_clock_label, "--:--");
@@ -160,46 +163,45 @@ static void page_manager_build_rail(lv_obj_t *parent)
 
     for (uint8_t index = 0; index < PAGE_MANAGER_BUTTON_COUNT; ++index)
     {
+        /* The slot keeps the key pitch; the cap inside it is what shows. */
         lv_obj_t *slot = page_manager_create_box(rail, lv_pct(100), PAGE_MANAGER_KEY_CELL_H);
-        lv_obj_set_style_bg_opa(slot, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(slot, KDL_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(slot, 1, 0);
-        lv_obj_set_style_border_side(slot, LV_BORDER_SIDE_BOTTOM, 0);
-        lv_obj_set_style_pad_left(slot, 5, 0);
-        lv_obj_set_style_pad_right(slot, 6, 0);
-        lv_obj_set_style_pad_column(slot, 5, 0);
-        lv_obj_set_flex_flow(slot, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(slot, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        s_key_slots[index] = slot;
+        lv_obj_set_style_pad_hor(slot, PAGE_MANAGER_KEY_INSET_X, 0);
+        lv_obj_set_style_pad_ver(slot, PAGE_MANAGER_KEY_INSET_Y, 0);
 
-        s_key_labels[index] = lv_label_create(slot);
-        lv_obj_set_flex_grow(s_key_labels[index], 1);
+        lv_obj_t *cap = page_manager_create_box(slot, lv_pct(100), lv_pct(100));
+        lv_obj_add_style(cap, &kdl_style_keycap, 0);
+        lv_obj_set_flex_flow(cap, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(cap, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        s_key_caps[index] = cap;
+
+        s_key_labels[index] = lv_label_create(cap);
         lv_obj_set_style_text_font(s_key_labels[index], KDL_FONT_KEY, 0);
-        lv_obj_set_style_text_align(s_key_labels[index], LV_TEXT_ALIGN_RIGHT, 0);
-        lv_label_set_long_mode(s_key_labels[index], LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_color(s_key_labels[index], KDL_COLOR_INK, 0);
         lv_label_set_text(s_key_labels[index], "");
 
         /* Filled right-pointing triangle aimed at the physical key. */
-        s_key_ticks[index] = lv_label_create(slot);
-        lv_obj_set_style_text_font(s_key_ticks[index], KDL_FONT_MICRO, 0);
-        lv_label_set_text(s_key_ticks[index], LV_SYMBOL_PLAY);
+        lv_obj_t *tick = lv_label_create(cap);
+        lv_obj_set_style_text_font(tick, KDL_FONT_MICRO, 0);
+        lv_obj_set_style_text_color(tick, KDL_COLOR_INK, 0);
+        lv_label_set_text(tick, LV_SYMBOL_PLAY);
     }
 }
 
 static void page_manager_apply_key_label(uint8_t index, const char *text)
 {
     const bool assigned = (text != NULL) && (text[0] != '\0');
-    const bool is_last = (index == PAGE_MANAGER_BUTTON_COUNT - 1U);
 
+    /* An unassigned key shows no cap at all: the key does nothing on this
+     * page, and a greyed-out cap would still draw the eye to it. */
     page_manager_set_text(s_key_labels[index], assigned ? text : "");
-    lv_obj_set_style_bg_color(s_key_slots[index],
-                              assigned ? (is_last ? KDL_COLOR_KEY_BG_LAST : KDL_COLOR_KEY_BG)
-                                       : KDL_COLOR_KEY_BG_EMPTY,
-                              0);
-    lv_obj_set_style_text_color(s_key_labels[index],
-                                assigned ? KDL_COLOR_INK : KDL_COLOR_KEY_INK_EMPTY, 0);
-    lv_obj_set_style_text_color(s_key_ticks[index],
-                                assigned ? KDL_COLOR_KEY_TICK : KDL_COLOR_KEY_TICK_OFF, 0);
+    if (assigned)
+    {
+        lv_obj_remove_flag(s_key_caps[index], LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+        lv_obj_add_flag(s_key_caps[index], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static const char *page_manager_effective_label(uint8_t index)

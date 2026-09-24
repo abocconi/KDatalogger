@@ -29,8 +29,7 @@ static const kdl_analog_desc_t s_analogs[KDL_ANALOG_DISPLAY_COUNT] = {
     { KDL_AI(4), .decimals = 2 },
 };
 
-/* U+00B0 DEGREE SIGN encoded as UTF-8; present in LVGL's built-in Montserrat
- * faces, unlike the accented characters an Italian UI would need. */
+/* U+00B0 DEGREE SIGN encoded as UTF-8; present in the text fonts. */
 static const char s_temperature_unit[] = "\xC2\xB0" "C";
 
 
