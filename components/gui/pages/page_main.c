@@ -61,6 +61,38 @@ static kdl_fluid_tile_t s_tiles[PAGE_MAIN_TILE_COUNT];
 static kdl_analog_cell_t s_cells[KDL_ANALOG_DISPLAY_COUNT];
 static uint64_t s_last_sample_uptime_ms = UINT64_MAX;
 
+static void on_tick(void)
+{
+    kdl_sensor_sample_t sample;
+    if (acquisition_service_get_latest_sample(&sample) != ESP_OK)
+    {
+        return;
+    }
+
+    /* The GUI ticks faster than the acquisition period, so most ticks carry
+     * the sample already on screen. Redrawing it would repaint the whole
+     * page for nothing. */
+    if (sample.uptime_ms == s_last_sample_uptime_ms)
+    {
+        return;
+    }
+    s_last_sample_uptime_ms = sample.uptime_ms;
+
+    kdl_sensor_extremes_t extremes;
+    const bool have_extremes = acquisition_service_get_extremes(&extremes) == ESP_OK;
+
+    const kdl_sensor_extremes_t *extremes_or_null = have_extremes ? &extremes : NULL;
+    kdl_cyl_bank_update(&s_bank, &sample, extremes_or_null);
+    for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
+    {
+        kdl_fluid_tile_update(&s_tiles[index], &sample, extremes_or_null);
+    }
+    for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
+    {
+        kdl_analog_cell_update(&s_cells[index], &sample);
+    }
+}
+
 static void on_show(lv_obj_t *content)
 {
     lv_obj_set_style_pad_all(content, PAGE_MAIN_PAD, 0);
@@ -102,6 +134,12 @@ static void on_show(lv_obj_t *content)
                        (int32_t)index * (PAGE_MAIN_CELL_W + PAGE_MAIN_CELL_GAP),
                        PAGE_MAIN_TOP_H + PAGE_MAIN_ROW_GAP);
     }
+
+    /* Paint the latest sample now rather than on the next GUI tick, up to
+     * GUI_TICK_PERIOD_MS away: until then the widgets would show their
+     * skeleton state, and a tile in warning, alarm or fault would flash
+     * white before taking its colour. */
+    on_tick();
 }
 
 static void on_hide(void)
@@ -118,38 +156,6 @@ static void on_hide(void)
         s_cells[index].root = NULL;
     }
     s_last_sample_uptime_ms = UINT64_MAX;
-}
-
-static void on_tick(void)
-{
-    kdl_sensor_sample_t sample;
-    if (acquisition_service_get_latest_sample(&sample) != ESP_OK)
-    {
-        return;
-    }
-
-    /* The GUI ticks faster than the acquisition period, so most ticks carry
-     * the sample already on screen. Redrawing it would repaint the whole
-     * page for nothing. */
-    if (sample.uptime_ms == s_last_sample_uptime_ms)
-    {
-        return;
-    }
-    s_last_sample_uptime_ms = sample.uptime_ms;
-
-    kdl_sensor_extremes_t extremes;
-    const bool have_extremes = acquisition_service_get_extremes(&extremes) == ESP_OK;
-
-    const kdl_sensor_extremes_t *extremes_or_null = have_extremes ? &extremes : NULL;
-    kdl_cyl_bank_update(&s_bank, &sample, extremes_or_null);
-    for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
-    {
-        kdl_fluid_tile_update(&s_tiles[index], &sample, extremes_or_null);
-    }
-    for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
-    {
-        kdl_analog_cell_update(&s_cells[index], &sample);
-    }
 }
 
 static void on_button(uint8_t button_index)
