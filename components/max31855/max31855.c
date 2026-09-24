@@ -128,11 +128,13 @@ esp_err_t max31855_read_channel(size_t channel, max31855_reading_t *reading)
     int32_t thermocouple_raw = max31855_sign_extend((raw_data >> 18) & 0x3FFFU, 14U);
     int32_t internal_raw = max31855_sign_extend((raw_data >> 4) & 0x0FFFU, 12U);
 
+    /* Fault bits per the MAX31855 datasheet memory map: D2 = SCV, D1 = SCG,
+     * D0 = OC. */
     *reading = (max31855_reading_t){
         .valid = !fault,
-        .open_circuit = (raw_data & BIT2) != 0U,
+        .open_circuit = (raw_data & BIT0) != 0U,
         .short_to_gnd = (raw_data & BIT1) != 0U,
-        .short_to_vcc = (raw_data & BIT0) != 0U,
+        .short_to_vcc = (raw_data & BIT2) != 0U,
         .thermocouple_c = (float)thermocouple_raw * MAX31855_THERMOCOUPLE_LSB_C,
         .internal_c = (float)internal_raw * MAX31855_INTERNAL_LSB_C,
         .raw_data = raw_data,
