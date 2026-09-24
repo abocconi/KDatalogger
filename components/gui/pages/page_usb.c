@@ -9,6 +9,7 @@
 #include "kdl_widgets.h"
 #include "logger_service.h"
 #include "storage_manager.h"
+#include "usb_msc_service.h"
 
 /*
  * USB mass-storage page. Everything it shows is a snapshot taken at the
@@ -24,6 +25,8 @@
 #define PAGE_USB_BADGE        34
 #define PAGE_USB_STAT_COUNT   3
 #define PAGE_USB_TEXT_LEN     24
+/** How long a first "Resume" press without an eject stays armed. */
+#define PAGE_USB_FORCE_WINDOW_MS 5000U
 
 typedef struct {
     char file[PAGE_USB_TEXT_LEN];
@@ -32,6 +35,12 @@ typedef struct {
 } page_usb_snapshot_t;
 
 static page_usb_snapshot_t s_snapshot;
+static lv_obj_t *s_alert_text;
+static bool s_force_armed;
+static uint32_t s_force_armed_at_ms;
+
+static const char s_alert_eject[] = "Eject the drive on the computer to resume.";
+static const char s_alert_force[] = "Drive not ejected! Press again to force resume.";
 
 static const char *const s_stat_captions[PAGE_USB_STAT_COUNT] = {
     "Session file", "Card free", "Samples",
@@ -215,9 +224,9 @@ static void page_usb_build_alert(lv_obj_t *parent)
     lv_obj_set_style_text_color(icon, KDL_COLOR_ALERT_BORDER, 0);
     lv_label_set_text(icon, LV_SYMBOL_WARNING);
 
-    lv_obj_t *text = lv_label_create(alert);
-    lv_obj_set_style_text_font(text, KDL_FONT_BODY, 0);
-    lv_label_set_text(text, "Eject the drive on the computer before resuming.");
+    s_alert_text = lv_label_create(alert);
+    lv_obj_set_style_text_font(s_alert_text, KDL_FONT_BODY, 0);
+    lv_label_set_text(s_alert_text, s_alert_eject);
 }
 
 static void on_show(lv_obj_t *content)
@@ -230,6 +239,7 @@ static void on_show(lv_obj_t *content)
                           LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(content, 9, 0);
 
+    s_force_armed = false;
     page_usb_build_header(content);
     page_usb_build_stats(content);
     page_usb_build_alert(content);
@@ -246,21 +256,52 @@ static void page_usb_resume(void)
 
 static void on_button(uint8_t button_index)
 {
-    /* Both the top and the bottom key leave the mode. The prototype labels
-     * them differently but they do the same thing, and in the field the
-     * forgiving option beats the tidy one. */
-    if (button_index == 0 || button_index == 4)
+    /* Key 4 is "USB" on every other page, so the same key enters and
+     * leaves the mode. */
+    if (button_index != 4)
+    {
+        return;
+    }
+
+    /* Leaving while the computer still has the drive mounted is allowed --
+     * the host may have crashed or the cable been pulled unseen -- but only on
+     * a second press, so skipping the eject is never an accident. */
+    if (usb_msc_service_host_holds_volume() && !s_force_armed)
+    {
+        s_force_armed = true;
+        s_force_armed_at_ms = lv_tick_get();
+        lv_label_set_text(s_alert_text, s_alert_force);
+        return;
+    }
+
+    page_usb_resume();
+}
+
+static void on_tick(void)
+{
+    /* The eject on the computer is the normal way out: once the host gives
+     * the volume back there is nothing left for the operator to do here. */
+    if (usb_msc_service_host_released())
     {
         page_usb_resume();
+        return;
+    }
+
+    if (s_force_armed && lv_tick_elaps(s_force_armed_at_ms) >= PAGE_USB_FORCE_WINDOW_MS)
+    {
+        s_force_armed = false;
+        lv_label_set_text(s_alert_text, s_alert_eject);
     }
 }
 
 const gui_page_t page_usb = {
     .name = "usb",
     .title = "USB MSC",
-    .button_labels = {"Resume", "", "", "", "Eject"},
+    /* No "Eject" key: the eject belongs on the computer, and a key named so
+     * here is what made skipping it feel safe. */
+    .button_labels = {"", "", "", "", "Resume"},
     .on_show = on_show,
     .on_hide = NULL,
-    .on_tick = NULL,
+    .on_tick = on_tick,
     .on_button = on_button,
 };

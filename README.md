@@ -99,10 +99,15 @@ Data;Ora;Tempo [s];Cil 1 [°C];…;Acqua [°C];P IC in [V];…;P olio [V]
 
 La partizione `storage` non può essere scritta contemporaneamente da firmware e host USB:
 
-- USB scollegato all'accensione → il firmware accede alla partizione (acquisizione/logging attivi).
-- USB collegato all'accensione, o collegato durante il funzionamento → il PC vede la partizione
-  come disco rimovibile; il firmware non può più scriverci finché non viene rimossa/espulsa lato
-  PC (o scollegata fisicamente).
+- Fuori dalla modalità USB il dispositivo è staccato dal bus (`tud_disconnect()`): anche col cavo
+  collegato il PC non lo vede, quindi non può scrivere sulla partizione né riprendersela mentre il
+  logger registra.
+- Il pulsante USB sull'HMI (con registrazione ferma) collega il dispositivo al PC, che vede la
+  partizione come disco rimovibile; acquisizione e logging sono fermi.
+- Si esce espellendo il disco dal PC: il firmware riceve l'eject e torna da solo in modalità
+  normale. "Resume" sull'HMI senza eject mostra un avviso e richiede una seconda pressione entro
+  5 s: è la via d'uscita se il PC si è bloccato o il cavo è stato staccato (la scheda non rileva
+  VBUS, quindi lo scollegamento non sempre si vede).
 
 ## Build
 
