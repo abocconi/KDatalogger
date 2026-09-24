@@ -2,5 +2,7 @@
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 3M,
-storage,  data, fat,     ,        4M,
+# App 2 MB (~1.06 MB used, ~48% headroom). Storage takes the rest of the 8 MB
+# flash, 0x210000-0x800000: operators rarely clear old logs, so capacity wins.
+factory,  app,  factory, 0x10000, 2M,
+storage,  data, fat,     ,        0x5F0000,

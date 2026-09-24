@@ -271,10 +271,20 @@ static void page_manager_refresh_recording(void)
              (unsigned)((elapsed_s / 60U) % 60U), (unsigned)(elapsed_s % 60U));
     page_manager_set_text(s_elapsed_label, elapsed_text);
 
-    page_manager_set_text(s_rec_label, recording ? KDL_TXT_STATUS_REC : KDL_TXT_STATUS_STOPPED);
+    /* A logging failure outranks the recording state: a session that looks
+     * like it is recording while nothing reaches the file is the worst case,
+     * and the operator has no other way to notice it. */
+    const bool log_fault = logger_service_has_fault();
+    const char *rec_text = recording ? KDL_TXT_STATUS_REC : KDL_TXT_STATUS_STOPPED;
+    page_manager_set_text(s_rec_label, log_fault ? KDL_TXT_STATUS_LOG_ERROR : rec_text);
 
     lv_color_t dot_color = KDL_COLOR_REC_STOPPED;
-    if (recording && !usb_active)
+    if (log_fault)
+    {
+        s_rec_blink_on = false;
+        dot_color = KDL_COLOR_HOT;
+    }
+    else if (recording && !usb_active)
     {
         s_rec_blink_on = !s_rec_blink_on;
         dot_color = s_rec_blink_on ? KDL_COLOR_REC_ON : KDL_COLOR_REC_OFF;

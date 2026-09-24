@@ -23,6 +23,8 @@
 /* -- Status bar ------------------------------------------------------------ */
 #define KDL_TXT_STATUS_REC          "REC"
 #define KDL_TXT_STATUS_STOPPED      "FERMO"
+/** Last session failed to start or lost data (e.g. volume full). */
+#define KDL_TXT_STATUS_LOG_ERROR    "ERRORE LOG"
 
 /* -- Keys shared by several pages ----------------------------------------- */
 #define KDL_TXT_KEY_USB             "USB"

@@ -34,3 +34,12 @@ const char *logger_service_get_current_path(void);
  * of the device. Event rows are not counted.
  */
 uint32_t logger_service_get_sample_count(void);
+
+/**
+ * @brief Whether the last session failed to start or lost data.
+ *
+ * Set when the log file cannot be opened or a write/flush fails; cleared only
+ * by the next successful start, so a failure stays visible after recording
+ * has stopped. Safe to call from any task.
+ */
+bool logger_service_has_fault(void);

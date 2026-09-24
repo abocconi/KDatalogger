@@ -27,10 +27,16 @@
  * at the fast end -- needless flash wear and a periodic stall in the
  * acquisition loop, since fsync on FAT+wear_levelling can take tens of ms. */
 #define LOGGER_FLUSH_PERIOD_MS 2000ULL
-/* Maximum number of log files kept on the filesystem.  When this limit is
- * reached the oldest file is deleted before creating the new one.  Set to
- * a value safely below the SPIFFS per-partition object limit (~45-50). */
-#define LOGGER_MAX_FILES 40U
+/* Free space kept available on the volume. Checked at session start and on
+ * every periodic flush: below it the oldest log files are deleted, so a
+ * device whose logs are never cleared keeps recording, as a ring buffer at
+ * file granularity. At the fastest rate (100 ms, ~115 B per row) this is
+ * roughly 4 minutes of data, far more than one flush period. */
+#define LOGGER_MIN_FREE_BYTES (256U * 1024U)
+/* Cap on the number of log files, bounding the directory scan done at
+ * session start and when reclaiming space. FAT subdirectories have no fixed
+ * entry limit; this is about scan time, not capacity. */
+#define LOGGER_MAX_FILES 500U
 
 /* The file is meant to be double-clicked open in an Italian-locale Excel:
  * ';' as field separator and ',' as decimal mark, which is what Excel expects
@@ -48,6 +54,9 @@ static FILE *s_log_file;
 static bool s_initialized;
 static bool s_active;
 static char s_current_path[LOGGER_PATH_MAX_LEN];
+static uint32_t s_current_index;
+/** Sticky until the next successful start; read from the GUI task. */
+static volatile bool s_fault;
 static uint32_t s_sample_count;
 static uint64_t s_last_flush_ms;
 /** Uptime of the first sample of the session: the zero of the "Tempo" column. */
@@ -114,51 +123,107 @@ static esp_err_t logger_ensure_directory(void)
     return ESP_OK;
 }
 
+typedef struct {
+    uint32_t count;
+    uint32_t min_index;
+    uint32_t max_index;
+} logger_dir_scan_t;
+
+/** Count the log files and find the lowest and highest index on the volume. */
+static void logger_scan_directory(logger_dir_scan_t *scan)
+{
+    scan->count = 0;
+    scan->min_index = UINT32_MAX;
+    scan->max_index = 0;
+
+    DIR *dir = opendir(LOGGER_DIRECTORY_PATH);
+    if (dir == NULL) {
+        return;
+    }
+
+    struct dirent *entry = NULL;
+    while ((entry = readdir(dir)) != NULL) {
+        uint32_t index = 0;
+        if (logger_parse_index(entry->d_name, &index)) {
+            if (index > scan->max_index) { scan->max_index = index; }
+            if (index < scan->min_index) { scan->min_index = index; }
+            scan->count++;
+        }
+    }
+    closedir(dir);
+}
+
+static esp_err_t logger_format_path(char *out, size_t len, uint32_t index)
+{
+    const int written = snprintf(out, len, "%s/%s%04" PRIu32 "%s", LOGGER_DIRECTORY_PATH,
+                                 LOGGER_FILE_PREFIX, index, LOGGER_FILE_EXTENSION);
+    ESP_RETURN_ON_FALSE(written > 0 && written < (int)len, ESP_ERR_INVALID_SIZE, TAG,
+                        "log path too long");
+    return ESP_OK;
+}
+
+/**
+ * Delete the oldest log file, never the one being written.
+ * @return ESP_ERR_NOT_FOUND when there is nothing left to delete.
+ */
+static esp_err_t logger_delete_oldest(void)
+{
+    logger_dir_scan_t scan;
+    logger_scan_directory(&scan);
+    if (scan.count == 0U || (s_active && scan.min_index == s_current_index)) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    char oldest[LOGGER_PATH_MAX_LEN];
+    ESP_RETURN_ON_ERROR(logger_format_path(oldest, sizeof(oldest), scan.min_index), TAG,
+                        "oldest path");
+    ESP_RETURN_ON_FALSE(remove(oldest) == 0, ESP_FAIL, TAG, "failed to delete %s: errno=%d",
+                        oldest, errno);
+    ESP_LOGI(TAG, "deleted oldest log %s (%" PRIu32 " files)", oldest, scan.count);
+    return ESP_OK;
+}
+
+/** Delete old logs until LOGGER_MIN_FREE_BYTES are free, or none is left. */
+static void logger_reclaim_space(void)
+{
+    for (;;) {
+        uint64_t total_bytes = 0;
+        uint64_t free_bytes = 0;
+        if (storage_manager_get_usage(&total_bytes, &free_bytes) != ESP_OK) {
+            ESP_LOGW(TAG, "free space unknown, nothing reclaimed");
+            return;
+        }
+        if (free_bytes >= LOGGER_MIN_FREE_BYTES) {
+            return;
+        }
+
+        const esp_err_t err = logger_delete_oldest();
+        if (err == ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "volume nearly full (%" PRIu64 " B free), no old log left to delete",
+                     free_bytes);
+            return;
+        }
+        if (err != ESP_OK) {
+            return;
+        }
+    }
+}
+
 static esp_err_t logger_resolve_next_path(void)
 {
-    DIR *dir = opendir(LOGGER_DIRECTORY_PATH);
-    uint32_t max_index = 0;
-    uint32_t min_index = UINT32_MAX;
-    uint32_t file_count = 0;
+    logger_dir_scan_t scan;
+    logger_scan_directory(&scan);
 
-    if (dir != NULL) {
-        struct dirent *entry = NULL;
-        while ((entry = readdir(dir)) != NULL) {
-            uint32_t parsed_index = 0;
-            if (logger_parse_index(entry->d_name, &parsed_index)) {
-                if (parsed_index > max_index) { max_index = parsed_index; }
-                if (parsed_index < min_index) { min_index = parsed_index; }
-                file_count++;
-            }
-        }
-        closedir(dir);
-    }
-
-    /* Log rotation: remove the oldest file when the limit is reached so
-     * fopen() on the new file does not fail due to filesystem object limits. */
-    if (file_count >= LOGGER_MAX_FILES && min_index != UINT32_MAX) {
-        char oldest[LOGGER_PATH_MAX_LEN];
-        int n = snprintf(oldest, sizeof(oldest), "%s/%s%04" PRIu32 "%s",
-                         LOGGER_DIRECTORY_PATH, LOGGER_FILE_PREFIX,
-                         min_index, LOGGER_FILE_EXTENSION);
-        if (n > 0 && n < (int)sizeof(oldest)) {
-            if (remove(oldest) == 0) {
-                ESP_LOGI(TAG, "log rotation: deleted %s (%"PRIu32" files)", oldest, file_count);
-            } else {
-                ESP_LOGW(TAG, "log rotation: failed to delete %s (errno=%d)", oldest, errno);
-            }
+    /* Count cap first, then free space: both drop the oldest files. */
+    for (uint32_t count = scan.count; count >= LOGGER_MAX_FILES; --count) {
+        if (logger_delete_oldest() != ESP_OK) {
+            break;
         }
     }
+    logger_reclaim_space();
 
-    int written = snprintf(s_current_path,
-                           sizeof(s_current_path),
-                           "%s/%s%04" PRIu32 "%s",
-                           LOGGER_DIRECTORY_PATH,
-                           LOGGER_FILE_PREFIX,
-                           max_index + 1,
-                           LOGGER_FILE_EXTENSION);
-    ESP_RETURN_ON_FALSE(written > 0 && written < (int)sizeof(s_current_path), ESP_ERR_INVALID_SIZE, TAG, "log path too long");
-    return ESP_OK;
+    s_current_index = scan.max_index + 1U;
+    return logger_format_path(s_current_path, sizeof(s_current_path), s_current_index);
 }
 
 static void logger_write_header(FILE *file)
@@ -229,14 +294,20 @@ static esp_err_t logger_commit_row(bool force_flush)
 {
     if (ferror(s_log_file) != 0) {
         clearerr(s_log_file);
+        s_fault = true;
         ESP_LOGE(TAG, "write failed for %s", s_current_path);
         return ESP_FAIL;
     }
 
     uint64_t now_ms = logger_get_uptime_ms();
     if (force_flush || (now_ms - s_last_flush_ms) >= LOGGER_FLUSH_PERIOD_MS) {
-        ESP_RETURN_ON_ERROR(logger_service_flush(), TAG, "flush failed");
+        if (logger_service_flush() != ESP_OK) {
+            s_fault = true;
+            return ESP_FAIL;
+        }
         s_last_flush_ms = now_ms;
+        /* After the flush, so the free count includes what was just written. */
+        logger_reclaim_space();
     }
 
     return ESP_OK;
@@ -252,7 +323,7 @@ esp_err_t logger_service_init(void)
     return ESP_OK;
 }
 
-esp_err_t logger_service_start(void)
+static esp_err_t logger_start_session(void)
 {
     ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "logger not initialized");
     ESP_RETURN_ON_FALSE(storage_manager_get_owner() == STORAGE_OWNER_FIRMWARE,
@@ -289,6 +360,17 @@ esp_err_t logger_service_start(void)
 
     ESP_LOGI(TAG, "Logging to %s", s_current_path);
     return ESP_OK;
+}
+
+esp_err_t logger_service_start(void)
+{
+    if (s_active) {
+        return ESP_OK;
+    }
+
+    const esp_err_t err = logger_start_session();
+    s_fault = (err != ESP_OK);
+    return err;
 }
 
 esp_err_t logger_service_stop(void)
@@ -367,4 +449,9 @@ const char *logger_service_get_current_path(void)
 uint32_t logger_service_get_sample_count(void)
 {
     return s_sample_count;
+}
+
+bool logger_service_has_fault(void)
+{
+    return s_fault;
 }

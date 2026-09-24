@@ -81,9 +81,15 @@ segnale) per avviare/fermare la sessione senza passare dalla GUI.
 
 ### Formato dei file di log
 
-Ogni sessione di registrazione crea `/data/logs/log_NNNN.csv` (max 40 file, il più vecchio viene
-cancellato). Il file è pensato per essere aperto con doppio click in Excel italiano: separatore
-`;`, decimale `,`, UTF-8 con BOM.
+Ogni sessione di registrazione crea `/data/logs/log_NNNN.csv`. Il file è pensato per essere aperto
+con doppio click in Excel italiano: separatore `;`, decimale `,`, UTF-8 con BOM.
+
+Spazio: la partizione dati è di circa 6 MB. Il logger cancella da solo i log più vecchi quando lo
+spazio libero scende sotto 256 KB (controllo all'avvio della sessione e a ogni flush, ogni 2 s) o i
+file superano 500: la registrazione non si ferma mai per disco pieno. Se un file non si apre o una
+scrittura fallisce, la barra di stato mostra `ERRORE LOG` finché la sessione successiva non parte
+correttamente. Nota macOS: i file cancellati dal Finder finiscono in `.Trashes` sul disco del
+datalogger e occupano spazio finché non si svuota il Cestino con il disco collegato.
 
 ```
 Data;Ora;Tempo [s];Cil 1 [°C];…;Acqua [°C];P IC in [V];…;P olio [V]
@@ -105,7 +111,7 @@ La partizione `storage` non può essere scritta contemporaneamente da firmware e
 - Il pulsante USB sull'HMI (con registrazione ferma) collega il dispositivo al PC, che vede la
   partizione come disco rimovibile; acquisizione e logging sono fermi.
 - Si esce espellendo il disco dal PC: il firmware riceve l'eject e torna da solo in modalità
-  normale. "Resume" sull'HMI senza eject mostra un avviso e richiede una seconda pressione entro
+  normale. "Esci" sull'HMI senza eject mostra un avviso e richiede una seconda pressione entro
   5 s: è la via d'uscita se il PC si è bloccato o il cavo è stato staccato (la scheda non rileva
   VBUS, quindi lo scollegamento non sempre si vede).
 
@@ -128,7 +134,7 @@ normali). Se il collegamento resta bloccato su "Connecting...", verificare che G
 vincolato da altro hardware sulla scheda.
 
 Partizionamento (`partitions.csv`, custom): bootloader a `0x0`, partition table a `0x8000`, app
-(`factory`) a `0x10000`.
+(`factory`, 2 MB) a `0x10000`, dati FAT (`storage`) da `0x210000` a fine flash (8 MB).
 
 ### Opzione A — `idf.py flash` (ambiente ESP-IDF gia' installato)
 

@@ -70,17 +70,16 @@ static void page_usb_format_grouped(uint32_t value, char *out, size_t len)
     out[written] = '\0';
 }
 
+/** Decimal units (1 MB = 1 000 000 B), as the macOS Finder counts them, so
+ *  the figure matches what the operator sees on the computer; one decimal,
+ *  rounded, with the Italian decimal comma. */
 static void page_usb_format_bytes(uint64_t bytes, char *out, size_t len)
 {
-    if (bytes >= (1024ULL * 1024ULL * 1024ULL))
-    {
-        const uint64_t tenths = (bytes * 10ULL) / (1024ULL * 1024ULL * 1024ULL);
-        snprintf(out, len, "%u.%u GB", (unsigned)(tenths / 10ULL), (unsigned)(tenths % 10ULL));
-    }
-    else
-    {
-        snprintf(out, len, "%u MB", (unsigned)(bytes / (1024ULL * 1024ULL)));
-    }
+    const bool giga = bytes >= 1000000000ULL;
+    const uint64_t tenth_unit = giga ? 100000000ULL : 100000ULL;
+    const uint64_t tenths = (bytes + tenth_unit / 2U) / tenth_unit;
+    snprintf(out, len, "%u,%u %s", (unsigned)(tenths / 10U), (unsigned)(tenths % 10U),
+             giga ? "GB" : "MB");
 }
 
 static void page_usb_capture_snapshot(void)
