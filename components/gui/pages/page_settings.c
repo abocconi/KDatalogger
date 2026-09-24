@@ -13,7 +13,7 @@
 /*
  * Settings list geometry. Rows are a fixed height and stack from the top
  * rather than sharing the content box between them: the list is short today
- * and stretching three rows over 282 px would read as a layout bug.
+ * and stretching four rows over 282 px would read as a layout bug.
  */
 #define PAGE_SETTINGS_PAD       6
 #define PAGE_SETTINGS_INNER_W   382
@@ -32,6 +32,7 @@ static const uint32_t s_period_presets_ms[] = { 100U, 200U, 250U, 500U, 1000U, 2
 
 typedef enum {
     PAGE_SETTINGS_ROW_SAMPLE_RATE = 0,
+    PAGE_SETTINGS_ROW_GRAPH_WINDOW,
     PAGE_SETTINGS_ROW_DATETIME,
     PAGE_SETTINGS_ROW_BRIGHTNESS,
     PAGE_SETTINGS_ROW_COUNT,
@@ -48,6 +49,7 @@ static bool s_editing;
 
 static const char *const s_row_names[PAGE_SETTINGS_ROW_COUNT] = {
     KDL_TXT_SETTINGS_PERIOD,
+    KDL_TXT_SETTINGS_GRAPH_WINDOW,
     KDL_TXT_SETTINGS_DATETIME,
     KDL_TXT_SETTINGS_BRIGHTNESS,
 };
@@ -55,6 +57,7 @@ static const char *const s_row_names[PAGE_SETTINGS_ROW_COUNT] = {
 /** Rows opening a sub-page show a single chevron; rows adjusted in place show
  *  the pair, matching the affordance used in the UI prototype. */
 static const char *const s_row_hints[PAGE_SETTINGS_ROW_COUNT] = {
+    LV_SYMBOL_LEFT LV_SYMBOL_RIGHT,
     LV_SYMBOL_LEFT LV_SYMBOL_RIGHT,
     LV_SYMBOL_RIGHT,
     LV_SYMBOL_LEFT LV_SYMBOL_RIGHT,
@@ -73,12 +76,44 @@ static uint8_t page_settings_nearest_preset(void)
     return PAGE_SETTINGS_PRESET_COUNT - 1U;
 }
 
+static uint8_t page_settings_window_preset(void)
+{
+    const uint16_t current = settings_service_get_graph_window_s();
+    for (uint8_t index = 0; index < SETTINGS_GRAPH_WINDOW_PRESET_COUNT; ++index)
+    {
+        if (settings_graph_window_presets_s[index] >= current)
+        {
+            return index;
+        }
+    }
+    return SETTINGS_GRAPH_WINDOW_PRESET_COUNT - 1U;
+}
+
+/** Step @p index by @p direction, clamped to [0, count - 1]. */
+static uint8_t page_settings_step_index(uint8_t index, int8_t direction, uint8_t count)
+{
+    const int32_t next = (int32_t)index + direction;
+    if (next < 0)
+    {
+        return 0;
+    }
+    if (next >= (int32_t)count)
+    {
+        return (uint8_t)(count - 1U);
+    }
+    return (uint8_t)next;
+}
+
 static void page_settings_format_value(page_settings_row_t row, char *out, size_t len)
 {
     switch (row)
     {
     case PAGE_SETTINGS_ROW_SAMPLE_RATE:
         snprintf(out, len, "%u ms", (unsigned)settings_service_get_acquisition_period_ms());
+        break;
+
+    case PAGE_SETTINGS_ROW_GRAPH_WINDOW:
+        snprintf(out, len, "%u s", (unsigned)settings_service_get_graph_window_s());
         break;
 
     case PAGE_SETTINGS_ROW_DATETIME:
@@ -238,16 +273,16 @@ static void page_settings_adjust(int8_t direction)
     switch ((page_settings_row_t)s_cursor)
     {
     case PAGE_SETTINGS_ROW_SAMPLE_RATE: {
-        int32_t index = (int32_t)page_settings_nearest_preset() + direction;
-        if (index < 0)
-        {
-            index = 0;
-        }
-        else if (index >= (int32_t)PAGE_SETTINGS_PRESET_COUNT)
-        {
-            index = (int32_t)PAGE_SETTINGS_PRESET_COUNT - 1;
-        }
+        const uint8_t index = page_settings_step_index(page_settings_nearest_preset(), direction,
+                                                       (uint8_t)PAGE_SETTINGS_PRESET_COUNT);
         (void)settings_service_set_acquisition_period_ms(s_period_presets_ms[index]);
+        break;
+    }
+
+    case PAGE_SETTINGS_ROW_GRAPH_WINDOW: {
+        const uint8_t index = page_settings_step_index(page_settings_window_preset(), direction,
+                                                       (uint8_t)SETTINGS_GRAPH_WINDOW_PRESET_COUNT);
+        (void)settings_service_set_graph_window_s(settings_graph_window_presets_s[index]);
         break;
     }
 

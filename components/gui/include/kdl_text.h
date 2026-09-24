@@ -58,10 +58,13 @@
 #define KDL_TXT_KEY_NEXT_CHANNEL    "Can. +"
 #define KDL_TXT_KEY_HOLD            "Pausa"
 #define KDL_TXT_KEY_RUN             "Avvia"
+/** printf format, one %u: seconds spanned by the plot. */
+#define KDL_TXT_GRAPH_WINDOW_FMT    "finestra %u s"
 
 /* -- Settings page --------------------------------------------------------- */
 #define KDL_TXT_SETTINGS_TITLE      "IMPOSTAZIONI"
 #define KDL_TXT_SETTINGS_PERIOD     "Periodo campionamento"
+#define KDL_TXT_SETTINGS_GRAPH_WINDOW "Finestra grafico"
 #define KDL_TXT_SETTINGS_DATETIME   "Data / ora"
 #define KDL_TXT_SETTINGS_BRIGHTNESS "Luminosità display"
 #define KDL_TXT_SETTINGS_NOT_SET    "non impostata"

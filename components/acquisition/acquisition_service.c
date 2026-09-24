@@ -20,6 +20,7 @@
 #include "logger_service.h"
 #include "max31855.h"
 #include "settings_service.h"
+#include "trend_service.h"
 
 #define ACQUISITION_TASK_NAME "acquisition"
 #define ACQUISITION_TASK_STACK_SIZE 4096
@@ -289,6 +290,11 @@ static void acquisition_task(void *arg)
             xSemaphoreGive(s_sample_mutex);
         }
 
+        esp_err_t trend_err = trend_service_add_sample(&sample);
+        if (trend_err != ESP_OK) {
+            ESP_LOGW(TAG, "trend update failed: %s", esp_err_to_name(trend_err));
+        }
+
         int64_t now_us = esp_timer_get_time();
         if (now_us - last_verbose_log_us >= ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US) {
             last_verbose_log_us = now_us;
@@ -423,6 +429,14 @@ esp_err_t acquisition_service_start(void)
     /* Drop a stop signal left pending by the previous run -- given after the
      * task had already left its loop -- or the first wait would return early. */
     (void)xSemaphoreTake(s_stop_signal, 0);
+
+    /* The trace would otherwise join the samples before and after the pause
+     * (USB mode) as if they were contiguous. Not fatal: the worst case is a
+     * graph spanning the gap. */
+    esp_err_t trend_err = trend_service_reset();
+    if (trend_err != ESP_OK) {
+        ESP_LOGW(TAG, "trend reset failed: %s", esp_err_to_name(trend_err));
+    }
 
     s_run_task = true;
     TaskHandle_t task_handle = NULL;

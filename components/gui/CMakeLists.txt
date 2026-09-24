@@ -23,5 +23,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     EMBED_FILES "assets/splash_480x320_rgb565.bin"
-    REQUIRES display data_model acquisition logger storage usb_msc digital_inputs board timekeeping settings lvgl
+    REQUIRES display data_model acquisition logger storage usb_msc digital_inputs board timekeeping settings trend lvgl
 )

@@ -14,6 +14,7 @@
 #include "logger_service.h"
 #include "settings_service.h"
 #include "storage_manager.h"
+#include "trend_service.h"
 #include "usb_msc_service.h"
 
 /* NOTE: software-side flicker (partial-buffer SPI tearing) has been fixed.
@@ -51,6 +52,7 @@ esp_err_t app_controller_init(void)
     ESP_RETURN_ON_ERROR(storage_manager_init(), TAG, "storage init failed");
     ESP_RETURN_ON_ERROR(usb_msc_service_init(), TAG, "usb msc init failed");
     ESP_RETURN_ON_ERROR(logger_service_init(), TAG, "logger init failed");
+    ESP_RETURN_ON_ERROR(trend_service_init(), TAG, "trend init failed");
     ESP_RETURN_ON_ERROR(acquisition_service_init(), TAG, "acquisition init failed");
     ESP_RETURN_ON_ERROR(gui_service_init(), TAG, "gui init failed");
     gui_actions_set_usb_msc_hooks(app_controller_enter_usb_msc_mode,

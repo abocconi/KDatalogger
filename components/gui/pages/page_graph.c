@@ -9,7 +9,7 @@
 #include "kdl_text.h"
 #include "kdl_theme.h"
 #include "kdl_widgets.h"
-#include "settings_service.h"
+#include "trend_service.h"
 
 /*
  * Graph page geometry, same arithmetic as page_main: the content box is
@@ -32,7 +32,6 @@
  *  share a temperature range and are worth overlaying on one scale. */
 #define PAGE_GRAPH_SERIES_COUNT KDL_SERIES_COLOR_COUNT
 
-#define PAGE_GRAPH_HISTORY_LEN  60
 #define PAGE_GRAPH_RANGE_MIN    0
 #define PAGE_GRAPH_RANGE_MAX    800
 
@@ -57,7 +56,12 @@ static lv_obj_t *s_window_label;
 
 static uint8_t s_selected;
 static bool s_hold;
-static uint64_t s_last_uptime_ms = UINT64_MAX;
+
+/* Last copy of the trend history, i.e. what the charts show. Static rather
+ * than on the LVGL task stack (~2 KB), and kept across page switches so a
+ * frozen (hold) view survives leaving the page. */
+static trend_snapshot_t s_snapshot;
+static bool s_snapshot_valid;
 
 static void page_graph_apply_title(void)
 {
@@ -84,12 +88,40 @@ static void page_graph_apply_legend_styles(void)
 }
 
 /**
- * Move the selected channel's history into the foreground chart.
+ * Copy one channel of the snapshot into a chart series.
  *
- * Both charts hold the same number of points, so the switch is a straight
- * copy of the background series' own array rather than a private history
- * buffer -- lv_chart already stores exactly what is needed.
+ * Right-aligned: the newest point sits at the right edge and a history that
+ * does not fill the window yet leaves the left part empty, as the trace
+ * looked when it scrolled in point by point.
  */
+static void page_graph_fill_series(lv_obj_t *chart, lv_chart_series_t *series, uint8_t channel)
+{
+    int32_t *points = lv_chart_get_y_array(chart, series);
+    if (points == NULL || lv_chart_get_point_count(chart) != s_snapshot.point_count)
+    {
+        return;
+    }
+
+    const uint16_t lead = (uint16_t)(s_snapshot.point_count - s_snapshot.filled);
+    for (uint16_t point = 0; point < s_snapshot.point_count; ++point)
+    {
+        int32_t value = LV_CHART_POINT_NONE;
+        if (point >= lead)
+        {
+            const int16_t stored = s_snapshot.points_c[channel][point - lead];
+            if (stored != TREND_NO_DATA)
+            {
+                value = stored;
+            }
+        }
+        points[point] = value;
+    }
+
+    /* The array is written in display order, so drawing must start at 0. */
+    lv_chart_set_x_start_point(chart, series, 0);
+}
+
+/** Move the selected channel's history into the foreground chart. */
 static void page_graph_adopt_selection(void)
 {
     if (s_chart_fg == NULL || s_series_fg == NULL)
@@ -97,21 +129,88 @@ static void page_graph_adopt_selection(void)
         return;
     }
 
-    const int32_t *source = lv_chart_get_y_array(s_chart_bg, s_series_bg[s_selected]);
-    int32_t *target = lv_chart_get_y_array(s_chart_fg, s_series_fg);
-    if (source != NULL && target != NULL)
+    if (s_snapshot_valid)
     {
-        for (uint16_t point = 0; point < PAGE_GRAPH_HISTORY_LEN; ++point)
-        {
-            target[point] = source[point];
-        }
+        page_graph_fill_series(s_chart_fg, s_series_fg, s_selected);
     }
-
     lv_chart_set_series_color(s_chart_fg, s_series_fg, kdl_theme_series_color(s_selected));
     lv_chart_refresh(s_chart_fg);
 
     page_graph_apply_legend_styles();
     page_graph_apply_title();
+}
+
+/** Redraw both charts and the window caption from s_snapshot. */
+static void page_graph_apply_snapshot(void)
+{
+    if (s_chart_bg == NULL || !s_snapshot_valid)
+    {
+        return;
+    }
+
+    /* A no-op unless the window geometry changed; lv_chart then reallocates
+     * the series arrays, which the fill below overwrites entirely. */
+    lv_chart_set_point_count(s_chart_bg, s_snapshot.point_count);
+    lv_chart_set_point_count(s_chart_fg, s_snapshot.point_count);
+
+    for (uint8_t index = 0; index < PAGE_GRAPH_SERIES_COUNT; ++index)
+    {
+        page_graph_fill_series(s_chart_bg, s_series_bg[index], index);
+    }
+    page_graph_fill_series(s_chart_fg, s_series_fg, s_selected);
+    lv_chart_refresh(s_chart_bg);
+    lv_chart_refresh(s_chart_fg);
+
+    char caption[24];
+    snprintf(caption, sizeof(caption), KDL_TXT_GRAPH_WINDOW_FMT, (unsigned)s_snapshot.window_s);
+    kdl_widget_set_text(s_window_label, caption);
+}
+
+/**
+ * Fetch a fresh snapshot if the history moved on since the last one.
+ *
+ * @return true if s_snapshot was replaced and the charts need redrawing.
+ */
+static bool page_graph_load_snapshot(void)
+{
+    if (s_snapshot_valid && trend_service_get_seq() == s_snapshot.seq)
+    {
+        return false;
+    }
+
+    /* On failure the previous copy stays on screen and the next tick retries. */
+    if (trend_service_get_snapshot(&s_snapshot) != ESP_OK)
+    {
+        return false;
+    }
+    s_snapshot_valid = true;
+    return true;
+}
+
+/** Legend readings: the latest sample, not the (peak-held) last point. */
+static void page_graph_update_legend_values(void)
+{
+    kdl_sensor_sample_t sample;
+    if (acquisition_service_get_latest_sample(&sample) != ESP_OK)
+    {
+        return;
+    }
+
+    char text[8];
+    for (uint8_t index = 0; index < PAGE_GRAPH_SERIES_COUNT; ++index)
+    {
+        /* A disconnected probe reads "---" here and leaves a gap in the trace
+         * rather than a line dropping to zero. */
+        if (kdl_channels_is_valid(&sample, index))
+        {
+            snprintf(text, sizeof(text), "%d", (int)sample.thermocouples_c[index]);
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "---");
+        }
+        kdl_widget_set_text(s_legend_values[index], text);
+    }
 }
 
 static lv_obj_t *page_graph_create_chart(lv_obj_t *parent, int32_t width, int32_t height)
@@ -123,10 +222,10 @@ static lv_obj_t *page_graph_create_chart(lv_obj_t *parent, int32_t width, int32_
     lv_obj_set_pos(chart, 0, 0);
     lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(chart, PAGE_GRAPH_HISTORY_LEN);
+    /* The point count follows the trend geometry, see page_graph_apply_snapshot(). */
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, PAGE_GRAPH_RANGE_MIN, PAGE_GRAPH_RANGE_MAX);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
-    /* No point markers: at 60 points across 380 px they merge into a band. */
+    /* No point markers: at up to 120 points across 380 px they merge into a band. */
     lv_obj_set_style_size(chart, 0, 0, LV_PART_INDICATOR);
     return chart;
 }
@@ -186,13 +285,10 @@ static void page_graph_build_plot(lv_obj_t *content)
     lv_obj_add_flag(s_window_label, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_set_style_text_font(s_window_label, KDL_FONT_MICRO, 0);
     lv_obj_set_style_text_color(s_window_label, KDL_COLOR_INK_MUTED, 0);
+    /* Bottom, not top: running exhaust traces sit in the upper half of the
+     * 0-800 scale, and at the right edge they are the newest points. */
     lv_obj_align(s_window_label, LV_ALIGN_BOTTOM_RIGHT, -4, -3);
-
-    /* The window is however long 60 samples take at the configured period, so
-     * it moves with the sample rate instead of being a fixed caption. */
-    const uint32_t window_s = (PAGE_GRAPH_HISTORY_LEN
-                               * settings_service_get_acquisition_period_ms()) / 1000U;
-    lv_label_set_text_fmt(s_window_label, "%u s window", (unsigned)window_s);
+    lv_label_set_text(s_window_label, "");
 }
 
 static void page_graph_build_legend(lv_obj_t *content)
@@ -256,10 +352,17 @@ static void on_show(lv_obj_t *content)
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(content, PAGE_GRAPH_GAP, 0);
 
-    s_last_uptime_ms = UINT64_MAX;
-
     page_graph_build_plot(content);
     page_graph_build_legend(content);
+
+    /* In hold the frozen copy is what should come back on screen; otherwise
+     * catch up with whatever was acquired while another page was shown. */
+    if (!s_hold)
+    {
+        (void)page_graph_load_snapshot();
+    }
+    page_graph_apply_snapshot();
+    page_graph_update_legend_values();
     page_graph_adopt_selection();
     page_manager_set_button_label(2, s_hold ? KDL_TXT_KEY_RUN : KDL_TXT_KEY_HOLD);
 }
@@ -277,7 +380,6 @@ static void on_hide(void)
         s_legend_ids[index] = NULL;
         s_legend_values[index] = NULL;
     }
-    s_last_uptime_ms = UINT64_MAX;
 }
 
 static void on_tick(void)
@@ -287,46 +389,16 @@ static void on_tick(void)
         return;
     }
 
-    kdl_sensor_sample_t sample;
-    if (acquisition_service_get_latest_sample(&sample) != ESP_OK)
+    /* Redrawing invalidates the whole chart, and the GUI ticks faster than
+     * acquisition produces samples at the slower periods: only repaint when
+     * the history actually moved. */
+    if (!page_graph_load_snapshot())
     {
         return;
     }
 
-    /* Appending a point invalidates the whole chart, and the GUI ticks faster
-     * than acquisition produces samples: without this guard every other tick
-     * would repaint the plot for data that has not changed. */
-    if (sample.uptime_ms == s_last_uptime_ms)
-    {
-        return;
-    }
-    s_last_uptime_ms = sample.uptime_ms;
-
-    char text[8];
-    for (uint8_t index = 0; index < PAGE_GRAPH_SERIES_COUNT; ++index)
-    {
-        const bool valid = kdl_channels_is_valid(&sample, index);
-        /* A disconnected probe leaves a gap in the trace rather than a line
-         * dropping to zero, and reads "---" in the legend. */
-        const int32_t point = valid ? (int32_t)sample.thermocouples_c[index]
-                                    : LV_CHART_POINT_NONE;
-
-        lv_chart_set_next_value(s_chart_bg, s_series_bg[index], point);
-        if (index == s_selected)
-        {
-            lv_chart_set_next_value(s_chart_fg, s_series_fg, point);
-        }
-
-        if (valid)
-        {
-            snprintf(text, sizeof(text), "%d", (int)sample.thermocouples_c[index]);
-        }
-        else
-        {
-            snprintf(text, sizeof(text), "---");
-        }
-        kdl_widget_set_text(s_legend_values[index], text);
-    }
+    page_graph_apply_snapshot();
+    page_graph_update_legend_values();
 }
 
 /** Step the selection by @p direction, skipping channels with no probe on
