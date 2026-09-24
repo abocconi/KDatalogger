@@ -10,6 +10,18 @@ lv_style_t kdl_style_row;
 lv_style_t kdl_style_row_sel;
 lv_style_t kdl_style_alert;
 
+lv_font_t kdl_font_28;
+lv_font_t kdl_font_20;
+lv_font_t kdl_font_14;
+lv_font_t kdl_font_12;
+lv_font_t kdl_font_10;
+
+LV_FONT_DECLARE(kdl_font_accents_28)
+LV_FONT_DECLARE(kdl_font_accents_20)
+LV_FONT_DECLARE(kdl_font_accents_14)
+LV_FONT_DECLARE(kdl_font_accents_12)
+LV_FONT_DECLARE(kdl_font_accents_10)
+
 static bool s_initialized;
 
 /* The chart palette, in the order series are assigned. Chosen for separation
@@ -36,12 +48,25 @@ static void kdl_style_reset_container(lv_style_t *style)
     lv_style_set_shadow_width(style, 0);
 }
 
+/** Copy a const built-in face into RAM so it can take a fallback. */
+static void kdl_font_chain(lv_font_t *out, const lv_font_t *builtin, const lv_font_t *accents)
+{
+    *out = *builtin;
+    out->fallback = accents;
+}
+
 void kdl_theme_init(void)
 {
     if (s_initialized)
     {
         return;
     }
+
+    kdl_font_chain(&kdl_font_28, &lv_font_montserrat_28, &kdl_font_accents_28);
+    kdl_font_chain(&kdl_font_20, &lv_font_montserrat_20, &kdl_font_accents_20);
+    kdl_font_chain(&kdl_font_14, &lv_font_montserrat_14, &kdl_font_accents_14);
+    kdl_font_chain(&kdl_font_12, &lv_font_montserrat_12, &kdl_font_accents_12);
+    kdl_font_chain(&kdl_font_10, &lv_font_montserrat_10, &kdl_font_accents_10);
 
     lv_style_init(&kdl_style_screen);
     kdl_style_reset_container(&kdl_style_screen);

@@ -8,6 +8,7 @@
 #include "display_driver.h"
 #include "gui_actions.h"
 #include "kdl_theme.h"
+#include "kdl_text.h"
 #include "logger_service.h"
 #include "timekeeping.h"
 
@@ -102,7 +103,7 @@ static void page_manager_build_statusbar(lv_obj_t *parent)
 
     s_rec_label = lv_label_create(bar);
     lv_obj_set_style_text_font(s_rec_label, KDL_FONT_BODY, 0);
-    lv_label_set_text(s_rec_label, "REC");
+    lv_label_set_text(s_rec_label, KDL_TXT_STATUS_REC);
 
     s_elapsed_label = lv_label_create(bar);
     lv_obj_set_style_text_font(s_elapsed_label, KDL_FONT_BODY, 0);
@@ -270,7 +271,7 @@ static void page_manager_refresh_recording(void)
              (unsigned)((elapsed_s / 60U) % 60U), (unsigned)(elapsed_s % 60U));
     page_manager_set_text(s_elapsed_label, elapsed_text);
 
-    page_manager_set_text(s_rec_label, recording ? "REC" : "STOPPED");
+    page_manager_set_text(s_rec_label, recording ? KDL_TXT_STATUS_REC : KDL_TXT_STATUS_STOPPED);
 
     lv_color_t dot_color = KDL_COLOR_REC_STOPPED;
     if (recording && !usb_active)

@@ -5,6 +5,7 @@
 #include "acquisition_service.h"
 #include "data_model.h"
 #include "kdl_channels.h"
+#include "kdl_text.h"
 #include "kdl_theme.h"
 #include "kdl_widgets.h"
 
@@ -150,11 +151,8 @@ static void on_button(uint8_t button_index)
 
 const gui_page_t page_main = {
     .name = "main",
-    /* U+2022 BULLET and U+00B0 DEGREE SIGN, both present in the built-in
-     * Montserrat faces. The unit lives here because it does not fit on
-     * the cards themselves. */
-    .title = "LIVE \xE2\x80\xA2 \xC2\xB0" "C",
-    .button_labels = {"", "", "Graph", "Settings", "USB"},
+    .title = KDL_TXT_MAIN_TITLE,
+    .button_labels = {"", "", KDL_TXT_KEY_GRAPH, KDL_TXT_KEY_SETTINGS, KDL_TXT_KEY_USB},
     .on_show = on_show,
     .on_hide = on_hide,
     .on_tick = on_tick,

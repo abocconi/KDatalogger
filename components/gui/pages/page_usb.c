@@ -6,6 +6,7 @@
 
 #include "gui_actions.h"
 #include "kdl_theme.h"
+#include "kdl_text.h"
 #include "kdl_widgets.h"
 #include "logger_service.h"
 #include "storage_manager.h"
@@ -25,7 +26,7 @@
 #define PAGE_USB_BADGE        34
 #define PAGE_USB_STAT_COUNT   3
 #define PAGE_USB_TEXT_LEN     24
-/** How long a first "Resume" press without an eject stays armed. */
+/** How long a first "Esci" press without an eject stays armed. */
 #define PAGE_USB_FORCE_WINDOW_MS 5000U
 
 typedef struct {
@@ -39,11 +40,9 @@ static lv_obj_t *s_alert_text;
 static bool s_force_armed;
 static uint32_t s_force_armed_at_ms;
 
-static const char s_alert_eject[] = "Eject the drive on the computer to resume.";
-static const char s_alert_force[] = "Drive not ejected! Press again to force resume.";
 
 static const char *const s_stat_captions[PAGE_USB_STAT_COUNT] = {
-    "Session file", "Card free", "Samples",
+    KDL_TXT_USB_STAT_FILE, KDL_TXT_USB_STAT_FREE, KDL_TXT_USB_STAT_SAMPLES,
 };
 
 /** Group a count in threes so a six-figure sample total stays readable at a
@@ -95,7 +94,7 @@ static void page_usb_capture_snapshot(void)
     }
     else
     {
-        snprintf(s_snapshot.file, sizeof(s_snapshot.file), "none");
+        snprintf(s_snapshot.file, sizeof(s_snapshot.file), KDL_TXT_USB_NO_FILE);
     }
 
     uint64_t total = 0;
@@ -159,12 +158,12 @@ static void page_usb_build_header(lv_obj_t *parent)
 
     lv_obj_t *title = lv_label_create(text);
     lv_obj_set_style_text_font(title, KDL_FONT_VALUE_SM, 0);
-    lv_label_set_text(title, "MASS STORAGE MODE");
+    lv_label_set_text(title, KDL_TXT_USB_HEADER);
 
     lv_obj_t *subtitle = lv_label_create(text);
     lv_obj_set_style_text_font(subtitle, KDL_FONT_BODY, 0);
     lv_obj_set_style_text_color(subtitle, KDL_COLOR_INK_DIM, 0);
-    lv_label_set_text(subtitle, "Acquisition stopped. Log volume mounted on the computer.");
+    lv_label_set_text(subtitle, KDL_TXT_USB_SUBTITLE);
 }
 
 static void page_usb_build_stats(lv_obj_t *parent)
@@ -226,7 +225,7 @@ static void page_usb_build_alert(lv_obj_t *parent)
 
     s_alert_text = lv_label_create(alert);
     lv_obj_set_style_text_font(s_alert_text, KDL_FONT_BODY, 0);
-    lv_label_set_text(s_alert_text, s_alert_eject);
+    lv_label_set_text(s_alert_text, KDL_TXT_USB_ALERT_EJECT);
 }
 
 static void on_show(lv_obj_t *content)
@@ -270,7 +269,7 @@ static void on_button(uint8_t button_index)
     {
         s_force_armed = true;
         s_force_armed_at_ms = lv_tick_get();
-        lv_label_set_text(s_alert_text, s_alert_force);
+        lv_label_set_text(s_alert_text, KDL_TXT_USB_ALERT_FORCE);
         return;
     }
 
@@ -290,16 +289,16 @@ static void on_tick(void)
     if (s_force_armed && lv_tick_elaps(s_force_armed_at_ms) >= PAGE_USB_FORCE_WINDOW_MS)
     {
         s_force_armed = false;
-        lv_label_set_text(s_alert_text, s_alert_eject);
+        lv_label_set_text(s_alert_text, KDL_TXT_USB_ALERT_EJECT);
     }
 }
 
 const gui_page_t page_usb = {
     .name = "usb",
-    .title = "USB MSC",
-    /* No "Eject" key: the eject belongs on the computer, and a key named so
+    .title = KDL_TXT_USB_TITLE,
+    /* No "eject" key: the eject belongs on the computer, and a key named so
      * here is what made skipping it feel safe. */
-    .button_labels = {"", "", "", "", "Resume"},
+    .button_labels = {"", "", "", "", KDL_TXT_KEY_EXIT},
     .on_show = on_show,
     .on_hide = NULL,
     .on_tick = on_tick,

@@ -6,6 +6,7 @@
 #include "acquisition_service.h"
 #include "data_model.h"
 #include "kdl_channels.h"
+#include "kdl_text.h"
 #include "kdl_theme.h"
 #include "kdl_widgets.h"
 #include "settings_service.h"
@@ -62,7 +63,7 @@ static void page_graph_apply_title(void)
 {
     const kdl_thermocouple_desc_t *desc = kdl_channels_thermocouple(s_selected);
     char title[40];
-    snprintf(title, sizeof(title), "%s \xE2\x80\xA2 %s", s_hold ? "HOLD" : "GRAPH",
+    snprintf(title, sizeof(title), "%s \xE2\x80\xA2 %s", s_hold ? KDL_TXT_GRAPH_TITLE_HOLD : KDL_TXT_GRAPH_TITLE,
              desc != NULL ? desc->channel->name : "");
     page_manager_set_title(title);
 }
@@ -260,7 +261,7 @@ static void on_show(lv_obj_t *content)
     page_graph_build_plot(content);
     page_graph_build_legend(content);
     page_graph_adopt_selection();
-    page_manager_set_button_label(2, s_hold ? "Run" : "Hold");
+    page_manager_set_button_label(2, s_hold ? KDL_TXT_KEY_RUN : KDL_TXT_KEY_HOLD);
 }
 
 static void on_hide(void)
@@ -361,7 +362,7 @@ static void on_button(uint8_t button_index)
         break;
     case 2:
         s_hold = !s_hold;
-        page_manager_set_button_label(2, s_hold ? "Run" : "Hold");
+        page_manager_set_button_label(2, s_hold ? KDL_TXT_KEY_RUN : KDL_TXT_KEY_HOLD);
         page_graph_apply_title();
         break;
     case 3:
@@ -377,8 +378,9 @@ static void on_button(uint8_t button_index)
 
 const gui_page_t page_graph = {
     .name = "graph",
-    .title = "GRAPH",
-    .button_labels = {"Prev ch", "Next ch", "Hold", "Back", "USB"},
+    .title = KDL_TXT_GRAPH_TITLE,
+    .button_labels = {KDL_TXT_KEY_PREV_CHANNEL, KDL_TXT_KEY_NEXT_CHANNEL, KDL_TXT_KEY_HOLD,
+                      KDL_TXT_KEY_BACK, KDL_TXT_KEY_USB},
     .on_show = on_show,
     .on_hide = on_hide,
     .on_tick = on_tick,

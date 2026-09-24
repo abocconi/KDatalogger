@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "kdl_theme.h"
+#include "kdl_text.h"
 #include "kdl_widgets.h"
 #include "timekeeping.h"
 
@@ -137,7 +138,7 @@ static void page_datetime_render_countdown(void)
     }
 
     char text[PAGE_DATETIME_COUNTDOWN_TEXT_LEN];
-    snprintf(text, sizeof(text), "Continuing without setting the clock in %u s",
+    snprintf(text, sizeof(text), KDL_TXT_DATETIME_COUNTDOWN,
              (unsigned)(s_remaining_s % 100U));
     kdl_widget_set_text(s_countdown_label, text);
 }
@@ -224,7 +225,7 @@ static void on_show(lv_obj_t *content)
     lv_obj_set_style_text_color(hint, KDL_COLOR_INK_MUTED, 0);
     lv_obj_set_size(hint, PAGE_DATETIME_INNER_W, PAGE_DATETIME_HINT_H);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint, "No battery-backed clock: the time is lost at power-down.");
+    lv_label_set_text(hint, KDL_TXT_DATETIME_HINT);
 
     s_countdown_label = lv_label_create(content);
     lv_obj_set_style_text_font(s_countdown_label, KDL_FONT_BODY, 0);
@@ -235,14 +236,14 @@ static void on_show(lv_obj_t *content)
 
     if (s_boot_mode)
     {
-        page_manager_set_button_label(4, "Skip");
+        page_manager_set_button_label(4, KDL_TXT_KEY_SKIP);
         s_remaining_s = PAGE_DATETIME_BOOT_TIMEOUT_S;
         page_datetime_render_countdown();
         s_timeout_timer = lv_timer_create(page_datetime_timeout_cb, 1000, NULL);
     }
     else
     {
-        page_manager_set_button_label(4, "Cancel");
+        page_manager_set_button_label(4, KDL_TXT_KEY_CANCEL);
     }
 
     page_datetime_refresh();
@@ -373,8 +374,9 @@ static void on_button(uint8_t button_index)
 
 const gui_page_t page_datetime = {
     .name = "datetime",
-    .title = "SET DATE / TIME",
-    .button_labels = {"+", "-", "Field", "OK", "Cancel"},
+    .title = KDL_TXT_DATETIME_TITLE,
+    .button_labels = {KDL_TXT_KEY_PLUS, KDL_TXT_KEY_MINUS, KDL_TXT_KEY_FIELD, KDL_TXT_KEY_OK,
+                      KDL_TXT_KEY_CANCEL},
     .on_show = on_show,
     .on_hide = on_hide,
     .on_tick = NULL,

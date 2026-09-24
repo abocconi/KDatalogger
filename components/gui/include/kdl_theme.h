@@ -54,16 +54,26 @@
 #define KDL_SERIES_COLOR_COUNT 6
 
 /* -- Fonts -----------------------------------------------------------------
- * LVGL's built-in Montserrat faces. Their glyph coverage is ASCII 0x20-0x7E
- * plus U+00B0 (degree), U+2022 (bullet) and the LV_SYMBOL_* set -- accented
- * characters are NOT included, which is why the UI ships English-only until
- * the faces are regenerated with an extended range (see kdl_i18n.h).        */
+ * LVGL's built-in Montserrat faces cover ASCII 0x20-0x7E plus U+00B0
+ * (degree), U+2022 (bullet) and the LV_SYMBOL_* set, but no accented
+ * letters. Each face below is a RAM copy of a built-in one, chained through
+ * `fallback` to a generated face holding only the Italian accented vowels
+ * (assets/fonts/kdl_font_accents_*.c). The built-in stays the primary, so
+ * line height and baseline -- and every layout measured against them -- are
+ * unchanged: LVGL draws a fallback glyph on the primary font's baseline.
+ * Valid only after kdl_theme_init().                                        */
 
-#define KDL_FONT_VALUE    (&lv_font_montserrat_28) /**< Probe card reading        */
-#define KDL_FONT_VALUE_SM (&lv_font_montserrat_20) /**< Analog reading, clock     */
-#define KDL_FONT_KEY      (&lv_font_montserrat_14) /**< Key rail labels           */
-#define KDL_FONT_BODY     (&lv_font_montserrat_12) /**< Titles, status bar, lists */
-#define KDL_FONT_MICRO    (&lv_font_montserrat_10) /**< Ids, min/max, date        */
+extern lv_font_t kdl_font_28;
+extern lv_font_t kdl_font_20;
+extern lv_font_t kdl_font_14;
+extern lv_font_t kdl_font_12;
+extern lv_font_t kdl_font_10;
+
+#define KDL_FONT_VALUE    (&kdl_font_28) /**< Probe card reading        */
+#define KDL_FONT_VALUE_SM (&kdl_font_20) /**< Analog reading, clock     */
+#define KDL_FONT_KEY      (&kdl_font_14) /**< Key rail labels           */
+#define KDL_FONT_BODY     (&kdl_font_12) /**< Titles, status bar, lists */
+#define KDL_FONT_MICRO    (&kdl_font_10) /**< Ids, min/max, date        */
 
 /* -- Shared styles ---------------------------------------------------------
  * Owned by kdl_theme.c and valid for the lifetime of the program. Pages

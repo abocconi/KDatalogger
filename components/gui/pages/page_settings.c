@@ -5,6 +5,7 @@
 
 #include "display_driver.h"
 #include "kdl_theme.h"
+#include "kdl_text.h"
 #include "kdl_widgets.h"
 #include "settings_service.h"
 #include "timekeeping.h"
@@ -46,9 +47,9 @@ static uint8_t s_cursor;
 static bool s_editing;
 
 static const char *const s_row_names[PAGE_SETTINGS_ROW_COUNT] = {
-    "Sample rate",
-    "Date / time",
-    "Display brightness",
+    KDL_TXT_SETTINGS_PERIOD,
+    KDL_TXT_SETTINGS_DATETIME,
+    KDL_TXT_SETTINGS_BRIGHTNESS,
 };
 
 /** Rows opening a sub-page show a single chevron; rows adjusted in place show
@@ -92,7 +93,7 @@ static void page_settings_format_value(page_settings_row_t row, char *out, size_
         }
         else
         {
-            snprintf(out, len, "not set");
+            snprintf(out, len, KDL_TXT_SETTINGS_NOT_SET);
         }
         break;
 
@@ -142,10 +143,10 @@ static void page_settings_apply_keys(void)
 {
     if (s_editing)
     {
-        page_manager_set_button_label(0, "+");
-        page_manager_set_button_label(1, "-");
-        page_manager_set_button_label(2, "Done");
-        page_manager_set_button_label(3, "Cancel");
+        page_manager_set_button_label(0, KDL_TXT_KEY_PLUS);
+        page_manager_set_button_label(1, KDL_TXT_KEY_MINUS);
+        page_manager_set_button_label(2, KDL_TXT_KEY_DONE);
+        page_manager_set_button_label(3, KDL_TXT_KEY_CANCEL);
     }
     else
     {
@@ -345,8 +346,9 @@ static void on_button(uint8_t button_index)
 
 const gui_page_t page_settings = {
     .name = "settings",
-    .title = "SETTINGS",
-    .button_labels = {"Up", "Down", "Edit", "Back", "USB"},
+    .title = KDL_TXT_SETTINGS_TITLE,
+    .button_labels = {KDL_TXT_KEY_UP, KDL_TXT_KEY_DOWN, KDL_TXT_KEY_EDIT, KDL_TXT_KEY_BACK,
+                      KDL_TXT_KEY_USB},
     .on_show = on_show,
     .on_hide = on_hide,
     .on_tick = on_tick,
