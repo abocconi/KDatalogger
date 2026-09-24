@@ -91,15 +91,14 @@ void kdl_probe_card_create(kdl_probe_card_t *card, lv_obj_t *parent,
     lv_obj_t *header = kdl_widget_row(card->root, inner_w, KDL_WIDGET_HEADER_H,
                                       LV_FLEX_ALIGN_CENTER);
     lv_obj_t *id = kdl_widget_label(header, KDL_FONT_MICRO, KDL_COLOR_INK_FAINT);
-    lv_label_set_text(id, desc->id);
+    lv_label_set_text(id, desc->channel->id);
     lv_obj_t *name = kdl_widget_label(header, KDL_FONT_MICRO, KDL_COLOR_INK);
     lv_obj_set_flex_grow(name, 1);
-    lv_label_set_text(name, desc->name);
-    /* No unit on the card. Measured against the built-in Montserrat faces,
-     * neither position works at this width: a four-digit reading already
-     * takes 75 of the 82 inner pixels, and "K6 Turbo out" plus a suffix
-     * needs 89. Since every thermocouple card carries the same unit, it is
-     * stated once in the status bar caption instead (see page_main.c). */
+    lv_label_set_text(name, desc->channel->name);
+    /* No unit on the card. Measured against the built-in Montserrat faces, a
+     * four-digit reading already takes 75 of the 82 inner pixels. Since every
+     * thermocouple card carries the same unit, it is stated once in the
+     * status bar caption instead (see page_main.c). */
 
     card->value = kdl_widget_label(card->root, KDL_FONT_VALUE, KDL_COLOR_INK);
     lv_obj_set_size(card->value, inner_w, KDL_WIDGET_VALUE_H);
@@ -249,10 +248,10 @@ void kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
     lv_obj_t *header = kdl_widget_row(cell->root, inner_w, KDL_WIDGET_HEADER_H,
                                       LV_FLEX_ALIGN_CENTER);
     lv_obj_t *id = kdl_widget_label(header, KDL_FONT_MICRO, KDL_COLOR_INK_FAINT);
-    lv_label_set_text(id, desc->id);
+    lv_label_set_text(id, desc->channel->id);
     lv_obj_t *name = kdl_widget_label(header, KDL_FONT_MICRO, KDL_COLOR_INK);
     lv_obj_set_flex_grow(name, 1);
-    lv_label_set_text(name, desc->name);
+    lv_label_set_text(name, desc->channel->name);
 
     lv_obj_t *value_row = kdl_widget_row(cell->root, inner_w, KDL_WIDGET_ANALOG_VALUE_H,
                                          LV_FLEX_ALIGN_END);
@@ -260,7 +259,7 @@ void kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
     lv_obj_set_flex_grow(cell->value, 1);
     lv_label_set_text(cell->value, "---");
     lv_obj_t *unit = kdl_widget_label(value_row, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED);
-    lv_label_set_text(unit, desc->unit);
+    lv_label_set_text(unit, desc->channel->unit);
 }
 
 void kdl_analog_cell_update(kdl_analog_cell_t *cell, const kdl_sensor_sample_t *sample)

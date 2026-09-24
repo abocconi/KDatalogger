@@ -16,7 +16,12 @@
  *   inner width  = 394 - 2 * PAD = 382
  *   inner height = 294 - 2 * PAD = 282 = TC grid (221) + GAP (5) + analog (56)
  *   TC grid      = 2 rows of 108 with one 5 px row gap
- *   columns      = 4 cards of 92 with three 4 px gaps = 380
+ *   TC columns   = 4 cards of 92 with three 4 px gaps = 380
+ *   analog row   = 5 cells of 73 with four 4 px gaps  = 381
+ *
+ * At 73 px the analog cell has 63 inner pixels: the widest header,
+ * "IN3" + "P IC out" in Montserrat 10, measures ~60 px, and "3.30" in
+ * Montserrat 20 plus the "V" suffix ~51 px.
  */
 #define PAGE_MAIN_PAD            6
 #define PAGE_MAIN_COL_GAP        4
@@ -26,6 +31,7 @@
 #define PAGE_MAIN_CARD_W         92
 #define PAGE_MAIN_CARD_H         108
 #define PAGE_MAIN_ANALOG_H       56
+#define PAGE_MAIN_ANALOG_CELL_W  73
 #define PAGE_MAIN_TC_GRID_H      (2 * PAGE_MAIN_CARD_H + PAGE_MAIN_ROW_GAP)
 
 _Static_assert(PAGE_MAIN_TC_GRID_H + PAGE_MAIN_ROW_GAP + PAGE_MAIN_ANALOG_H
@@ -35,6 +41,10 @@ _Static_assert(4 * PAGE_MAIN_CARD_W + 3 * PAGE_MAIN_COL_GAP <= PAGE_MAIN_INNER_W
                "four cards per row overflow the content width");
 _Static_assert(KDL_THERMOCOUPLE_DISPLAY_COUNT == 8,
                "thermocouple grid is laid out as 4 columns by 2 rows");
+_Static_assert(KDL_ANALOG_DISPLAY_COUNT == 5,
+               "analog row is laid out as a single row of 5 cells");
+_Static_assert(5 * PAGE_MAIN_ANALOG_CELL_W + 4 * PAGE_MAIN_COL_GAP <= PAGE_MAIN_INNER_W,
+               "five analog cells overflow the content width");
 
 static kdl_probe_card_t s_cards[KDL_THERMOCOUPLE_DISPLAY_COUNT];
 static kdl_analog_cell_t s_cells[KDL_ANALOG_DISPLAY_COUNT];
@@ -71,7 +81,7 @@ static void on_show(lv_obj_t *content)
     for (uint8_t index = 0; index < KDL_ANALOG_DISPLAY_COUNT; ++index)
     {
         kdl_analog_cell_create(&s_cells[index], analog, kdl_channels_analog(index),
-                               PAGE_MAIN_CARD_W, PAGE_MAIN_ANALOG_H);
+                               PAGE_MAIN_ANALOG_CELL_W, PAGE_MAIN_ANALOG_H);
     }
 }
 

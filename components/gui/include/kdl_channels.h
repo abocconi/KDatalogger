@@ -4,42 +4,36 @@
 #include <stdint.h>
 
 #include "data_model.h"
+#include "data_model_channels.h"
 
 /**
  * @file kdl_channels.h
- * @brief Static channel descriptors: names, units, scaling and thresholds.
+ * @brief Display descriptors: channel identity plus rendering calibration.
  *
- * Channel naming is deliberately compile-time. An on-device text editor
- * driven by five keys was scoped out, so renaming a channel is a firmware
- * change. Full-scale and threshold values feed the card fill bar and the
- * value colour; they are calibration knobs, not physical limits.
+ * Id, name and unit come from data_model_channels.h, shared with the log
+ * file. What is added here is display-only: full-scale and threshold values
+ * feed the card fill bar and the value colour; they are calibration knobs,
+ * not physical limits.
  */
 
-/** @brief Analog input reserved as the recording-enable contact.
+/** @brief Analog channels rendered on the main page (IN2..IN6).
  *
- * AI1 is wired to the REC switch and is never rendered as a measurement, so
- * the main page shows exactly DATA_MODEL_ANALOG_INPUT_COUNT-1 analog cells.
- * See acquisition_sync_recording_state() in acquisition_service.c. */
-#define KDL_ANALOG_RECORD_ENABLE_INDEX 0U
-
-/** @brief Analog channels actually rendered on the main page. */
-#define KDL_ANALOG_DISPLAY_COUNT (DATA_MODEL_ANALOG_INPUT_COUNT - 1U)
+ * IN1 is the recording-enable contact and is not part of the sampled analog
+ * group at all, so every sampled channel is shown. */
+#define KDL_ANALOG_DISPLAY_COUNT DATA_MODEL_ANALOG_INPUT_COUNT
 
 /** @brief Thermocouple channels rendered on the main page. */
 #define KDL_THERMOCOUPLE_DISPLAY_COUNT DATA_MODEL_THERMOCOUPLE_COUNT
 
 typedef struct {
-    const char *id;        /**< Terminal marking on the enclosure, e.g. "K1" */
-    const char *name;      /**< Short human label, e.g. "Exh 1"              */
+    const kdl_channel_info_t *channel; /**< Shared id/name/unit              */
     float full_scale;      /**< Fill-bar 100 % point, in the channel's unit  */
     float warn_threshold;  /**< Value colour turns amber at or above this    */
     float alarm_threshold; /**< Value colour turns red at or above this      */
 } kdl_thermocouple_desc_t;
 
 typedef struct {
-    const char *id;      /**< Terminal marking, e.g. "A2"                 */
-    const char *name;    /**< Short human label, e.g. "Boost"             */
-    const char *unit;    /**< Unit suffix, e.g. "bar"                     */
+    const kdl_channel_info_t *channel; /**< Shared id/name/unit          */
     uint8_t decimals;    /**< Digits after the decimal point when printed */
     uint8_t input_index; /**< Index into kdl_sensor_sample_t.analog_inputs */
 } kdl_analog_desc_t;
@@ -53,8 +47,8 @@ const kdl_thermocouple_desc_t *kdl_channels_thermocouple(uint8_t index);
 /**
  * @brief Descriptor for the @p index-th *displayed* analog channel (0-based).
  *
- * Display index 0 is the first non-reserved input, so the returned descriptor
- * carries its own input_index for indexing into the sample.
+ * The returned descriptor carries its own input_index for indexing into the
+ * sample.
  * @return NULL if @p index is out of range.
  */
 const kdl_analog_desc_t *kdl_channels_analog(uint8_t index);

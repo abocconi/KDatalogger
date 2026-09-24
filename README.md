@@ -24,8 +24,24 @@ per visualizzare canali, grafici e impostazioni senza bisogno di un host.
 
 **Ingressi digitali** (GPIO 15, 16, 17, 18, 3)
 
-**Ingressi analogici** (GPIO 9, 7, 6, 5, 4) — AI1 (GPIO13) non fa parte di questo gruppo: è
-riassegnato a ingresso digitale "record enable" (livello alto = logging attivo, vedi sotto).
+**Ingressi analogici** IN2–IN6 (GPIO 9, 7, 6, 5, 4) — IN1 (GPIO13) non fa parte di questo
+gruppo: è riassegnato a ingresso digitale "record enable" (livello alto = logging attivo, vedi
+sotto).
+
+**Canali** — nomi e unità sono in `components/data_model/data_model_channels.c`, condivisi da
+display e log (modificarli richiede un nuovo firmware):
+
+| Ingresso | Sigla | Grandezza |
+| --- | --- | --- |
+| Tc1–Tc4 | `Cil 1`–`Cil 4` | temperatura cilindro 1–4 |
+| Tc5 / Tc6 | `IC in` / `IC out` | temperatura ingresso / uscita intercooler |
+| Tc7 / Tc8 | `Olio` / `Acqua` | temperatura olio / acqua |
+| IN2 / IN3 | `P IC in` / `P IC out` | pressione turbo ingresso / uscita intercooler |
+| IN4 | `P scar` | pressione gas di scarico |
+| IN5 / IN6 | `P benz` / `P olio` | pressione benzina / olio |
+
+Le pressioni sono in volt finché non è nota la scala dei sensori. IN7 (contagiri) non è ancora
+gestito.
 
 **Display (SPI2_HOST)**
 
@@ -60,7 +76,7 @@ riassegnato a ingresso digitale "record enable" (livello alto = logging attivo, 
 ### Registrazione condizionata da GPIO
 
 Il logging non parte automaticamente all'accensione: segue il livello dell'ingresso "record
-enable" (AI1 / GPIO13) — alto = logging ON, basso = OFF. Serve un comando esterno (interruttore o
+enable" (IN1 / GPIO13) — alto = logging ON, basso = OFF. Serve un comando esterno (interruttore o
 segnale) per avviare/fermare la sessione senza passare dalla GUI.
 
 ### Formato dei file di log
@@ -70,14 +86,14 @@ cancellato). Il file è pensato per essere aperto con doppio click in Excel ital
 `;`, decimale `,`, UTF-8 con BOM.
 
 ```
-Data;Ora;Tempo [s];TC1 [°C];…;TC8 [°C];AI2 [V];…;AI6 [V]
+Data;Ora;Tempo [s];Cil 1 [°C];…;Acqua [°C];P IC in [V];…;P olio [V]
 23/09/2026;14:32:05;0,00;85,25;…;;1,234;…
 ```
 
 - `Data`/`Ora` sono vuote se l'orologio non è stato impostato dopo l'accensione.
 - `Tempo [s]` parte da 0 al primo campione della sessione: è l'asse X per i grafici.
 - Un canale non valido (termocoppia aperta/in corto, errore ADC) è una cella vuota.
-- AI1 non compare: è l'ingresso record-enable. Gli analogici sono in volt, senza scala.
+- IN1 non compare: è l'ingresso record-enable. Gli analogici sono in volt, senza scala.
 
 ### USB MSC: accesso esclusivo
 

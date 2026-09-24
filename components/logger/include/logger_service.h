@@ -17,8 +17,9 @@ esp_err_t logger_service_flush(void);
  * @brief Append one sample row to the current log file.
  *
  * The file is a CSV for an Italian-locale Excel (';' separator, ',' decimal
- * mark, UTF-8 BOM) with columns Data, Ora, Tempo [s], TC1..TC8 [°C] and
- * AI2..AI6 [V]. Data/Ora are empty while the wall clock is not set; Tempo
+ * mark, UTF-8 BOM) with columns Data, Ora, Tempo [s], then one column per
+ * thermocouple and analog input, headed "<name> [<unit>]" from
+ * data_model_channels.h. Data/Ora are empty while the wall clock is not set; Tempo
  * counts from the first sample of the session. Channels flagged invalid in
  * the sample are written as empty cells.
  */

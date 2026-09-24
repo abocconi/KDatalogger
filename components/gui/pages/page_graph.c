@@ -63,7 +63,7 @@ static void page_graph_apply_title(void)
     const kdl_thermocouple_desc_t *desc = kdl_channels_thermocouple(s_selected);
     char title[40];
     snprintf(title, sizeof(title), "%s \xE2\x80\xA2 %s", s_hold ? "HOLD" : "GRAPH",
-             desc != NULL ? desc->name : "");
+             desc != NULL ? desc->channel->name : "");
     page_manager_set_title(title);
 }
 
@@ -239,7 +239,7 @@ static void page_graph_build_legend(lv_obj_t *content)
         s_legend_ids[index] = lv_label_create(header);
         lv_obj_set_style_text_font(s_legend_ids[index], KDL_FONT_MICRO, 0);
         lv_label_set_long_mode(s_legend_ids[index], LV_LABEL_LONG_CLIP);
-        lv_label_set_text(s_legend_ids[index], desc != NULL ? desc->id : "");
+        lv_label_set_text(s_legend_ids[index], desc != NULL ? desc->channel->id : "");
 
         s_legend_values[index] = lv_label_create(cell);
         lv_obj_set_size(s_legend_values[index], PAGE_GRAPH_CELL_W - 10, 16);

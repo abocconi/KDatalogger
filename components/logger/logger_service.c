@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "data_model_channels.h"
 #include "storage_manager.h"
 #include "timekeeping.h"
 
@@ -37,13 +38,9 @@
 #define LOGGER_CSV_SEPARATOR ';'
 #define LOGGER_DECIMAL_MARK ','
 #define LOGGER_UTF8_BOM "\xEF\xBB\xBF"
-#define LOGGER_DEGREE_SIGN "\xC2\xB0"
 #define LOGGER_EOL "\r\n"
 #define LOGGER_TC_DECIMALS 2
 #define LOGGER_AI_DECIMALS 3
-/* AI1 is the record-enable input and is not sampled, so the first analog
- * channel of the data model is AI2 on the connector. */
-#define LOGGER_FIRST_ANALOG_LABEL 2U
 
 static const char *TAG = "logger";
 
@@ -167,11 +164,15 @@ static esp_err_t logger_resolve_next_path(void)
 static void logger_write_header(FILE *file)
 {
     fputs(LOGGER_UTF8_BOM "Data;Ora;Tempo [s]", file);
-    for (unsigned index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
-        fprintf(file, ";TC%u [" LOGGER_DEGREE_SIGN "C]", index + 1U);
+    /* Same names as on screen, so the Excel legend matches the display.
+     * None contains the separator, hence no quoting. */
+    for (size_t index = 0; index < DATA_MODEL_THERMOCOUPLE_COUNT; ++index) {
+        const kdl_channel_info_t *channel = &data_model_thermocouple_channels[index];
+        fprintf(file, ";%s [%s]", channel->name, channel->unit);
     }
-    for (unsigned index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
-        fprintf(file, ";AI%u [V]", index + LOGGER_FIRST_ANALOG_LABEL);
+    for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
+        const kdl_channel_info_t *channel = &data_model_analog_channels[index];
+        fprintf(file, ";%s [%s]", channel->name, channel->unit);
     }
     fputs(LOGGER_EOL, file);
 }
