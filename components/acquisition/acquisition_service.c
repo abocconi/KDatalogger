@@ -28,6 +28,11 @@
  * ESP_LVGL_PORT_INIT_CONFIG) so a 1s acquisition/logging cycle can never
  * preempt and stall the display flush task. */
 #define ACQUISITION_TASK_PRIORITY 3
+/* Pinned away from the esp_lvgl_port task (core 0). Unpinned, cycles overran
+ * at short acquisition periods during long LVGL renders (page switch, chart
+ * redraw): once preempted on core 0, this task waited out the render there
+ * instead of moving to core 1. */
+#define ACQUISITION_TASK_CORE 1
 /* Once-a-second line with every channel, for bench work on the inputs; off
  * in normal use. The line is ~220 chars: at 115200 baud that is ~19 ms of
  * blocking UART writes inside the loop, which would dominate the cycle at
@@ -530,12 +535,13 @@ esp_err_t acquisition_service_start(void)
 
     s_run_task = true;
     TaskHandle_t task_handle = NULL;
-    BaseType_t task_created = xTaskCreate(acquisition_task,
-                                          ACQUISITION_TASK_NAME,
-                                          ACQUISITION_TASK_STACK_SIZE,
-                                          NULL,
-                                          ACQUISITION_TASK_PRIORITY,
-                                          &task_handle);
+    BaseType_t task_created = xTaskCreatePinnedToCore(acquisition_task,
+                                                      ACQUISITION_TASK_NAME,
+                                                      ACQUISITION_TASK_STACK_SIZE,
+                                                      NULL,
+                                                      ACQUISITION_TASK_PRIORITY,
+                                                      &task_handle,
+                                                      ACQUISITION_TASK_CORE);
     ESP_RETURN_ON_FALSE(task_created == pdPASS, ESP_ERR_NO_MEM, TAG, "failed to create acquisition task");
     s_task_handle = task_handle;
     return ESP_OK;
