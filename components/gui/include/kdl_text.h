@@ -92,3 +92,28 @@
 #define KDL_TXT_USB_ALERT_EJECT     "Espelli il disco dal computer per uscire."
 #define KDL_TXT_USB_ALERT_FORCE     "Disco non espulso! Premi di nuovo per uscire."
 #define KDL_TXT_KEY_EXIT            "Esci"
+
+/* -- Firmware update page -------------------------------------------------- */
+#define KDL_TXT_FW_TITLE            "AGGIORNAMENTO"
+#define KDL_TXT_FW_WRITING          "Aggiornamento firmware"
+/** printf format, one %s: version being installed. */
+#define KDL_TXT_FW_WRITING_FMT      "Installazione della versione %s. Non spegnere il datalogger."
+#define KDL_TXT_FW_RESTARTING       "Aggiornamento completato"
+#define KDL_TXT_FW_RESTARTING_MSG   "Riavvio in corso..."
+#define KDL_TXT_FW_INSTALLED        "Firmware aggiornato"
+/** printf format, one %s: version now running. */
+#define KDL_TXT_FW_INSTALLED_FMT    "Versione in uso: %s."
+#define KDL_TXT_FW_ROLLED_BACK      "Aggiornamento non riuscito"
+/** printf format, one %s: version that failed to start. */
+#define KDL_TXT_FW_ROLLED_BACK_FMT  "La versione %s non si è avviata correttamente: è tornata in uso la versione precedente."
+#define KDL_TXT_FW_INVALID          "File di aggiornamento danneggiato"
+#define KDL_TXT_FW_INVALID_MSG      "Il file è stato rinominato in .bad. Copiarlo di nuovo dal computer e poi espellere il disco."
+#define KDL_TXT_FW_MULTIPLE         "Troppi file di aggiornamento"
+#define KDL_TXT_FW_MULTIPLE_MSG     "Sul disco ci sono più file di aggiornamento: lasciarne uno solo."
+#define KDL_TXT_FW_ALREADY          "Versione già installata"
+/** printf format, one %s: version already running. */
+#define KDL_TXT_FW_ALREADY_FMT      "La versione %s è già in uso. Il file è stato rimosso."
+#define KDL_TXT_FW_WRITE_FAILED     "Errore di aggiornamento"
+#define KDL_TXT_FW_WRITE_FAILED_MSG "Scrittura non riuscita, firmware invariato. Il file resta sul disco e verrà riprovato."
+/** printf format, one %u: percentage written. */
+#define KDL_TXT_FW_PROGRESS_FMT     "%u %%"

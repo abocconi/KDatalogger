@@ -37,6 +37,9 @@ void page_manager_init(lv_obj_t *screen);
 /** @brief Hide the current page (if any), clear content, show the new page. */
 void page_manager_switch_to(const gui_page_t *page);
 
+/** @brief Page currently shown, NULL before the first switch. */
+const gui_page_t *page_manager_get_current(void);
+
 /** @brief Refresh the chrome, then forward a periodic tick to the current page. */
 void page_manager_tick(void);
 

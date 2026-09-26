@@ -383,6 +383,11 @@ void page_manager_switch_to(const gui_page_t *page)
     }
 }
 
+const gui_page_t *page_manager_get_current(void)
+{
+    return s_current_page;
+}
+
 void page_manager_tick(void)
 {
     /* Nothing to refresh while the chrome is hidden, and writing into

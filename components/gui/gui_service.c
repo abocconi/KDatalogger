@@ -79,6 +79,7 @@ static void gui_button_poll_cb(lv_timer_t *timer)
 static void gui_tick_cb(lv_timer_t *timer)
 {
     (void)timer;
+    page_fw_update_poll();
     page_manager_tick();
 }
 

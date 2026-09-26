@@ -10,6 +10,7 @@ extern const gui_page_t page_graph;
 extern const gui_page_t page_settings;
 extern const gui_page_t page_datetime;
 extern const gui_page_t page_usb;
+extern const gui_page_t page_fw_update;
 
 /**
  * @brief Arm the date/time mask before switching to it.
@@ -30,3 +31,12 @@ void page_datetime_configure(const gui_page_t *return_page, bool boot_mode);
  * volume the filesystem is unmounted and there is nothing left to query.
  */
 void page_usb_enter(void);
+
+/**
+ * @brief Bring up the firmware update page when there is something to show.
+ *
+ * Called on every GUI tick. An install in progress takes over from any page;
+ * an outcome notice waits for the main page, so it never interrupts the
+ * power-up date prompt or a settings edit.
+ */
+void page_fw_update_poll(void);

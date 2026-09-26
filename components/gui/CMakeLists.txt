@@ -20,8 +20,9 @@ idf_component_register(
          "pages/page_settings.c"
          "pages/page_datetime.c"
          "pages/page_usb.c"
+         "pages/page_fw_update.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     EMBED_FILES "assets/splash_480x320_rgb565.bin"
-    REQUIRES display data_model acquisition logger storage usb_msc digital_inputs board timekeeping settings trend lvgl
+    REQUIRES display data_model acquisition logger storage usb_msc digital_inputs board timekeeping settings trend fw_update lvgl
 )
