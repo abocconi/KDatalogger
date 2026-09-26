@@ -6,8 +6,11 @@ tools/viewer/src/viewer.html, so the result opens from file:// with no network
 and no other file next to it. Runs the parser test first (needs node; skip
 with --skip-tests).
 
+The default output is the copy the firmware embeds (component log_viewer) and
+writes to the root of the data volume: commit it after regenerating.
+
 Usage: python3 tools/gen_viewer.py [--skip-tests] [-o OUTPUT]
-       (default output: tools/viewer/dist/datalogger.html)
+       (default output: components/log_viewer/assets/datalogger.html)
 """
 
 import argparse
@@ -20,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VIEWER = ROOT / "tools" / "viewer"
 TEMPLATE = VIEWER / "src" / "viewer.html"
-DEFAULT_OUTPUT = VIEWER / "dist" / "datalogger.html"
+DEFAULT_OUTPUT = ROOT / "components" / "log_viewer" / "assets" / "datalogger.html"
 TEST = VIEWER / "test" / "csv_parser.test.js"
 
 INLINE = re.compile(r"^[ \t]*(?:/\*|//)@@INLINE_(CSS|JS) (\S+)@@(?:\*/)?[ \t]*$", re.MULTILINE)

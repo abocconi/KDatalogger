@@ -19,6 +19,7 @@
 #include "fw_update.h"
 #include "gui_actions.h"
 #include "gui_service.h"
+#include "log_viewer.h"
 #include "logger_service.h"
 #include "settings_service.h"
 #include "storage_manager.h"
@@ -46,12 +47,15 @@ static const char *TAG = "app_controller";
 
 /* Mode transitions come from the GUI task (USB key, eject) and from the
  * controller loop (firmware update): s_mode_mutex serialises them, so the
- * volume can never be handed to the USB host while an update reads it. */
+ * volume can never be handed to the USB host while an update reads it or the
+ * viewer page is being written. */
 static volatile app_mode_t s_app_mode = APP_MODE_NORMAL;
 static SemaphoreHandle_t s_mode_mutex;
 static StaticSemaphore_t s_mode_mutex_buffer;
 /** Set at boot and after USB mode, i.e. whenever the volume may hold a new file. */
 static volatile bool s_fw_scan_requested;
+/** Same triggers: the operator may have deleted or changed the viewer page. */
+static volatile bool s_viewer_check_requested;
 /** Start of the current normal-mode run, for the post-update self-test. */
 static volatile int64_t s_normal_since_us;
 
@@ -113,6 +117,7 @@ esp_err_t app_controller_start(void)
     ESP_RETURN_ON_ERROR(gui_service_start(), TAG, "gui start failed");
     s_normal_since_us = esp_timer_get_time();
     s_fw_scan_requested = true;
+    s_viewer_check_requested = true;
     ESP_LOGI(TAG, "KDatalogger services ready in normal mode");
 
     return ESP_OK;
@@ -180,6 +185,7 @@ static esp_err_t app_controller_exit_usb_msc_mode_locked(void)
     s_normal_since_us = esp_timer_get_time();
     s_app_mode = APP_MODE_NORMAL;
     s_fw_scan_requested = true;
+    s_viewer_check_requested = true;
     ESP_LOGI(TAG, "Returned to normal mode");
     return ESP_OK;
 }
@@ -367,11 +373,41 @@ static void app_controller_service_fw_update(void)
     esp_restart();
 }
 
+/**
+ * Put the viewer page back on the volume if it is missing or stale. Like the
+ * update scan, it waits for the end of a recording -- a rewrite erases flash
+ * for long enough to back up the logger queue -- and holds the mode mutex, so
+ * the volume cannot go to the USB host mid-write. A USB request made during a
+ * rewrite (first boot after an update, or after the page was deleted) waits
+ * for it to finish.
+ */
+static void app_controller_service_log_viewer(void)
+{
+    if (!s_viewer_check_requested || logger_service_is_active()) {
+        return;
+    }
+    if (xSemaphoreTake(s_mode_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "mode mutex take failed");
+        return;
+    }
+    if (s_app_mode == APP_MODE_NORMAL) {
+        /* Not retried on failure until the next boot or USB session: a
+         * volume that rejects the write would otherwise be hammered. */
+        s_viewer_check_requested = false;
+        const esp_err_t err = log_viewer_install();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "log viewer page not installed: %s", esp_err_to_name(err));
+        }
+    }
+    xSemaphoreGive(s_mode_mutex);
+}
+
 void app_controller_run(void)
 {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(APP_CONTROLLER_LOOP_PERIOD_MS));
         app_controller_self_test();
         app_controller_service_fw_update();
+        app_controller_service_log_viewer();
     }
 }
