@@ -7,6 +7,14 @@
 
 #define STORAGE_MOUNT_PATH "/data"
 
+/**
+ * wl_read()/wl_write() are wrapped at link time to split requests at 4 KB
+ * page boundaries (wl_page_split.c, IDF 6.1 wear levelling bug), so callers
+ * may pass multi-sector ranges at any sector-aligned address. Remove together
+ * with the wrapper.
+ */
+#define STORAGE_WL_SPLITS_PAGES 1
+
 typedef enum {
     STORAGE_OWNER_NONE = 0,
     STORAGE_OWNER_FIRMWARE,

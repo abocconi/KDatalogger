@@ -2,10 +2,14 @@
 # Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 #
 CONFIG_TINYUSB_MSC_ENABLED=y
-# 8 KB per USB write instead of 512 B: WL performance mode erases the flash
+# 8 KB per USB transfer instead of 512 B: WL performance mode erases the flash
 # sectors a write fully covers directly, and read-modify-writes only the
 # partial ones at the edges -- with 512 B every write rewrote a whole 4 KB
 # sector. Keep it a multiple of CONFIG_WL_SECTOR_SIZE.
+# Safe ONLY with components/storage/wl_page_split.c: esp_tinyusb hands the
+# whole buffer to wl_read()/wl_write() at a 512 B-aligned address, and WL_Flash
+# (IDF 6.1) maps a range crossing a 4 KB page wrongly (stale reads, lost
+# writes). The wrapper splits at page boundaries; without it this must be 512.
 CONFIG_TINYUSB_MSC_BUFSIZE=8192
 
 CONFIG_PARTITION_TABLE_CUSTOM=y

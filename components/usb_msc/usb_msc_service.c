@@ -11,6 +11,16 @@
 
 static const char *TAG = "usb_msc";
 
+/* A buffer larger than a WL sector makes esp_tinyusb pass multi-sector ranges
+ * to wl_read()/wl_write(), which WL_Flash (IDF 6.1) maps wrongly when they
+ * cross a 4 KB page: corrupted reads, silently lost writes. Safe only while
+ * storage wraps those calls (wl_page_split.c); without the wrapper the buffer
+ * must go back to one sector. See sdkconfig.defaults. */
+_Static_assert(STORAGE_WL_SPLITS_PAGES || CONFIG_TINYUSB_MSC_BUFSIZE == CONFIG_WL_SECTOR_SIZE,
+               "MSC buffer larger than a WL sector needs the wl_page_split wrapper");
+_Static_assert(CONFIG_TINYUSB_MSC_BUFSIZE % CONFIG_WL_SECTOR_SIZE == 0,
+               "MSC buffer must be a multiple of the WL sector size");
+
 static tinyusb_msc_storage_handle_t s_storage_hdl;
 static bool s_driver_installed;
 /* The three flags below are written from the TinyUSB task (callbacks) and
