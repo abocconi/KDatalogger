@@ -53,6 +53,21 @@ static SemaphoreHandle_t s_stop_signal;
 
 #define ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS 50
 
+/** Per-channel thermocouple state, tracked only to log its changes. */
+typedef enum {
+    TC_STATE_UNKNOWN = 0, /**< No reading yet since boot */
+    TC_STATE_OK,
+    TC_STATE_OPEN,        /**< No probe plugged in: a normal configuration */
+    TC_STATE_SHORT_GND,
+    TC_STATE_SHORT_VCC,
+    TC_STATE_FAULT,       /**< Fault bit without a specific cause */
+    TC_STATE_READ_ERROR,  /**< SPI transfer to the MAX31855 failed */
+} tc_state_t;
+
+/* Kept across stop/start, so leaving USB mode does not repeat every
+ * "probe disconnected" line. Only touched by the acquisition task. */
+static tc_state_t s_tc_state[DATA_MODEL_THERMOCOUPLE_COUNT];
+
 /** Fold one sample into the running extremes. Caller must hold s_sample_mutex. */
 static void acquisition_update_extremes(const kdl_sensor_sample_t *sample)
 {
@@ -127,6 +142,66 @@ static analog_inputs_config_t acquisition_build_analog_input_config(void)
     return config;
 }
 
+static tc_state_t acquisition_classify_reading(const max31855_reading_t *reading)
+{
+    if (reading->valid) {
+        return TC_STATE_OK;
+    }
+    if (reading->short_to_vcc) {
+        return TC_STATE_SHORT_VCC;
+    }
+    if (reading->short_to_gnd) {
+        return TC_STATE_SHORT_GND;
+    }
+    if (reading->open_circuit) {
+        return TC_STATE_OPEN;
+    }
+    return TC_STATE_FAULT;
+}
+
+/**
+ * Log a channel only when its state changes: logging the state every cycle
+ * flooded the console with one line per unplugged probe per period, and
+ * blocked the task on the UART for tens of ms. An unplugged probe is a normal
+ * setup, so it is reported as info; shorts and read errors stay warnings.
+ */
+static void acquisition_report_tc_state(size_t channel, tc_state_t state, uint32_t raw_data,
+                                        esp_err_t read_err)
+{
+    const tc_state_t previous = s_tc_state[channel];
+    if (state == previous) {
+        return;
+    }
+    s_tc_state[channel] = state;
+
+    switch (state) {
+    case TC_STATE_OK:
+        if (previous != TC_STATE_UNKNOWN) {
+            ESP_LOGI(TAG, "Thermocouple %u: probe OK", (unsigned)channel);
+        }
+        break;
+    case TC_STATE_OPEN:
+        ESP_LOGI(TAG, "Thermocouple %u: probe disconnected", (unsigned)channel);
+        break;
+    case TC_STATE_SHORT_GND:
+    case TC_STATE_SHORT_VCC:
+    case TC_STATE_FAULT:
+        ESP_LOGW(TAG, "Thermocouple %u: MAX31855 fault %s (raw=0x%08" PRIx32 ")",
+                 (unsigned)channel,
+                 state == TC_STATE_SHORT_GND ? "short to GND"
+                 : state == TC_STATE_SHORT_VCC ? "short to VCC" : "unspecified",
+                 raw_data);
+        break;
+    case TC_STATE_READ_ERROR:
+        ESP_LOGW(TAG, "Thermocouple %u: MAX31855 read failed: %s", (unsigned)channel,
+                 esp_err_to_name(read_err));
+        break;
+    case TC_STATE_UNKNOWN:
+    default:
+        break;
+    }
+}
+
 static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
 {
     sample->thermocouple_valid_mask = 0;
@@ -138,9 +213,11 @@ static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
         max31855_reading_t reading = {0};
         esp_err_t err = max31855_read_channel(index, &reading);
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "MAX31855 read failed on channel %u: %s", (unsigned)index, esp_err_to_name(err));
+            acquisition_report_tc_state(index, TC_STATE_READ_ERROR, 0, err);
             continue;
         }
+        acquisition_report_tc_state(index, acquisition_classify_reading(&reading), reading.raw_data,
+                                    ESP_OK);
 
         sample->thermocouples_c[index] = reading.thermocouple_c;
         if (reading.valid) {
@@ -149,13 +226,6 @@ static void acquisition_fill_max31855_thermocouples(kdl_sensor_sample_t *sample)
             if (reading.open_circuit)  { sample->thermocouple_oc_mask  |= (uint16_t)(1U << index); }
             if (reading.short_to_gnd)  { sample->thermocouple_scg_mask |= (uint16_t)(1U << index); }
             if (reading.short_to_vcc)  { sample->thermocouple_scv_mask |= (uint16_t)(1U << index); }
-            ESP_LOGW(TAG,
-                     "MAX31855 fault on channel %u raw=0x%08" PRIx32 " oc=%d scg=%d scv=%d",
-                     (unsigned)index,
-                     reading.raw_data,
-                     reading.open_circuit,
-                     reading.short_to_gnd,
-                     reading.short_to_vcc);
         }
     }
 }
