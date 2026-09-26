@@ -162,8 +162,8 @@ static esp_err_t app_controller_exit_usb_msc_mode_locked(void)
 #if KDL_ACQUISITION_ENABLED
     ESP_RETURN_ON_ERROR(acquisition_service_start(), TAG, "acquisition restart failed");
 #endif
-    s_app_mode = APP_MODE_NORMAL;
     s_normal_since_us = esp_timer_get_time();
+    s_app_mode = APP_MODE_NORMAL;
     s_fw_scan_requested = true;
     ESP_LOGI(TAG, "Returned to normal mode");
     return ESP_OK;
@@ -222,10 +222,13 @@ static esp_err_t app_controller_check_acquisition(void)
  * reject it. The window restarts on every return from USB mode: acquisition
  * is stopped there and its last sample goes stale. A hang or crash before
  * the verdict resets the chip, and the bootloader rolls back on its own.
+ *
+ * Runs under the mode mutex: a switch to USB mode halfway through would make
+ * the volume unreadable and pass for a failed test.
  */
-static void app_controller_self_test(void)
+static void app_controller_self_test_locked(void)
 {
-    if (!fw_update_is_pending_verify() || s_app_mode != APP_MODE_NORMAL
+    if (s_app_mode != APP_MODE_NORMAL
         || esp_timer_get_time() - s_normal_since_us < APP_CONTROLLER_SELF_TEST_US) {
         return;
     }
@@ -255,6 +258,19 @@ static void app_controller_self_test(void)
     ESP_LOGE(TAG, "rollback failed: %s", esp_err_to_name(err));
 }
 
+static void app_controller_self_test(void)
+{
+    if (!fw_update_is_pending_verify()) {
+        return;
+    }
+    if (xSemaphoreTake(s_mode_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "mode mutex take failed");
+        return;
+    }
+    app_controller_self_test_locked();
+    xSemaphoreGive(s_mode_mutex);
+}
+
 /** Stop everything that touches the volume or the flash, for the install. */
 static esp_err_t app_controller_quiesce_for_update(void)
 {
@@ -281,8 +297,8 @@ static void app_controller_leave_update_mode(void)
     }
 #endif
     if (xSemaphoreTake(s_mode_mutex, portMAX_DELAY) == pdTRUE) {
-        s_app_mode = APP_MODE_NORMAL;
         s_normal_since_us = esp_timer_get_time();
+        s_app_mode = APP_MODE_NORMAL;
         xSemaphoreGive(s_mode_mutex);
     }
 }
