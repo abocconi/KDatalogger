@@ -2,6 +2,11 @@
 # Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 #
 CONFIG_TINYUSB_MSC_ENABLED=y
+# 8 KB per USB write instead of 512 B: WL performance mode erases the flash
+# sectors a write fully covers directly, and read-modify-writes only the
+# partial ones at the edges -- with 512 B every write rewrote a whole 4 KB
+# sector. Keep it a multiple of CONFIG_WL_SECTOR_SIZE.
+CONFIG_TINYUSB_MSC_BUFSIZE=8192
 
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
