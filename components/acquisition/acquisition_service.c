@@ -47,6 +47,8 @@ static bool s_use_max31855;
 static bool s_use_digital_inputs;
 static bool s_use_analog_inputs;
 static int s_record_enable_gpio = -1;
+/** Recording state last handed to the logger; only touched by the acquisition task. */
+static bool s_recording_requested;
 static kdl_sensor_sample_t s_last_sample;
 static kdl_sensor_extremes_t s_extremes;
 static SemaphoreHandle_t s_sample_mutex;
@@ -278,7 +280,8 @@ static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
  *
  * High = recording ON, low = recording OFF. Called once per acquisition
  * cycle, so the response to a level change is bounded by
- * ACQUISITION_PERIOD_MS.
+ * ACQUISITION_PERIOD_MS. Only the edge is sent: the logger task opens and
+ * closes the file on its own time, and retries an open that fails.
  */
 static void acquisition_sync_recording_state(void)
 {
@@ -286,21 +289,25 @@ static void acquisition_sync_recording_state(void)
         return;
     }
 
-    bool want_recording = gpio_get_level(s_record_enable_gpio) != 0;
-    bool is_recording = logger_service_is_active();
-    if (want_recording == is_recording) {
+    const bool want_recording = gpio_get_level(s_record_enable_gpio) != 0;
+    if (want_recording == s_recording_requested) {
         return;
     }
 
-    esp_err_t err = want_recording ? logger_service_start() : logger_service_stop();
-    if (err == ESP_OK && want_recording) {
+    const esp_err_t err = want_recording ? logger_service_request_start()
+                                         : logger_service_request_stop();
+    if (err != ESP_OK) {
+        /* State left unchanged: the edge is sent again next cycle. */
+        ESP_LOGW(TAG, "recording %s (AI1) not requested: %s",
+                 want_recording ? "start" : "stop", esp_err_to_name(err));
+        return;
+    }
+
+    s_recording_requested = want_recording;
+    if (want_recording) {
         /* A new run starts with a clean slate: min/max on screen must describe
          * this session, not whatever the probes saw while idling in the pits. */
         (void)acquisition_service_reset_extremes();
-    }
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "recording %s (AI1) failed: %s",
-                 want_recording ? "start" : "stop", esp_err_to_name(err));
     }
 }
 
@@ -346,6 +353,9 @@ static void acquisition_task(void *arg)
 
     ESP_LOGI(TAG, "Acquisition task started");
     s_active = true;
+    /* Normally false here (USB and update handoffs stop the logger after
+     * acquisition); a session left open is then closed by the next AI1 check. */
+    s_recording_requested = logger_service_is_active();
 
     TickType_t last_wake_time = xTaskGetTickCount();
 #if ACQUISITION_VERBOSE_LOG_ENABLED
@@ -393,8 +403,12 @@ static void acquisition_task(void *arg)
         }
 #endif
 
-        if (logger_service_is_active() && logger_service_log_sample(&sample) != ESP_OK) {
-            ESP_LOGW(TAG, "Sample logging failed");
+        if (s_recording_requested) {
+            /* Only queued here: a full queue is reported by the logger itself. */
+            const esp_err_t log_err = logger_service_submit_sample(&sample);
+            if (log_err != ESP_OK && log_err != ESP_ERR_TIMEOUT) {
+                ESP_LOGW(TAG, "Sample logging failed: %s", esp_err_to_name(log_err));
+            }
         }
 
         acquisition_wait_next_cycle(&last_wake_time);

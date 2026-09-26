@@ -138,8 +138,19 @@ static esp_err_t app_controller_enter_usb_msc_mode_locked(void)
     if (logger_service_is_active()) {
         /* The file is closed even when the final flush fails, so the handoff
          * is still safe -- aborting here would only lock the operator out of
-         * the logs that did make it to flash. */
+         * the logs that did make it to flash. A timeout is different: the
+         * logger task may still have the file open. */
         const esp_err_t stop_err = logger_service_stop();
+        if (stop_err == ESP_ERR_TIMEOUT) {
+#if KDL_ACQUISITION_ENABLED
+            const esp_err_t restart_err = acquisition_service_start();
+            if (restart_err != ESP_OK) {
+                ESP_LOGE(TAG, "acquisition restart failed: %s", esp_err_to_name(restart_err));
+            }
+#endif
+            ESP_LOGE(TAG, "logger did not stop, USB handoff aborted");
+            return stop_err;
+        }
         if (stop_err != ESP_OK) {
             ESP_LOGW(TAG, "logger stop failed (%s), continuing USB handoff",
                      esp_err_to_name(stop_err));
@@ -283,6 +294,8 @@ static esp_err_t app_controller_quiesce_for_update(void)
     }
     if (logger_service_is_active()) {
         const esp_err_t err = logger_service_stop();
+        /* Timed out: the file may still be open, so the flash is not ours to rewrite. */
+        ESP_RETURN_ON_FALSE(err != ESP_ERR_TIMEOUT, err, TAG, "logger did not stop");
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "logger stop failed (%s), continuing update", esp_err_to_name(err));
         }
