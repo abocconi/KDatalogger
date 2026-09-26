@@ -11,9 +11,10 @@
 
 /*
  * Firmware update page: progress while the image is written, then -- after
- * a failure, or after the reset into a new image -- a notice that stays up
- * until the operator acknowledges it. The page only mirrors fw_update's
- * status; the install itself runs in the controller task.
+ * a failure, or after a rollback from a new image -- a notice that stays up
+ * until the operator acknowledges it. A successful update raises no notice:
+ * the version on the splash and in the settings says it. The page only
+ * mirrors fw_update's status; the install itself runs in the controller task.
  */
 #define PAGE_FW_PAD           14
 #define PAGE_FW_INNER_W       366
@@ -59,10 +60,6 @@ static bool page_fw_update_describe_notice(const fw_update_status_t *status, con
 {
     switch (status->notice)
     {
-    case FW_UPDATE_NOTICE_INSTALLED:
-        *title = KDL_TXT_FW_INSTALLED;
-        snprintf(message, len, KDL_TXT_FW_INSTALLED_FMT, status->version);
-        return true;
     case FW_UPDATE_NOTICE_ROLLED_BACK:
         *title = KDL_TXT_FW_ROLLED_BACK;
         snprintf(message, len, KDL_TXT_FW_ROLLED_BACK_FMT, status->version);

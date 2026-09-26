@@ -19,8 +19,9 @@
  * The image goes to the OTA slot that is not running and boots pending
  * verification: the caller confirms it with fw_update_confirm_running()
  * once the system is up, otherwise the bootloader returns to the previous
- * image on the next reset. The outcome is kept in NVS across that reset and
- * reported as a notice (fw_update_get_status()).
+ * image on the next reset. The install is recorded in NVS across that reset
+ * so a rollback can be reported as a notice (fw_update_get_status()); a
+ * successful install raises none -- the version shown on screen tells.
  *
  * Not thread-safe except for fw_update_get_status() and
  * fw_update_ack_notice(): the rest must be called from a single task.
@@ -45,7 +46,6 @@ typedef enum {
 /** Outcome waiting to be shown to the operator; cleared by fw_update_ack_notice(). */
 typedef enum {
     FW_UPDATE_NOTICE_NONE = 0,
-    FW_UPDATE_NOTICE_INSTALLED,         /**< Now running `version`, confirmed */
     FW_UPDATE_NOTICE_ROLLED_BACK,       /**< `version` did not come up; previous image restored */
     FW_UPDATE_NOTICE_INVALID_FILE,      /**< Update file damaged; renamed to *.bad */
     FW_UPDATE_NOTICE_MULTIPLE_FILES,    /**< More than one update file; none installed */
@@ -79,8 +79,7 @@ bool fw_update_is_pending_verify(void);
 /**
  * @brief Mark the running image valid and cancel the rollback.
  *
- * No-op when the image is not pending verification. Raises
- * FW_UPDATE_NOTICE_INSTALLED when this image came from an update.
+ * No-op when the image is not pending verification.
  */
 esp_err_t fw_update_confirm_running(void);
 

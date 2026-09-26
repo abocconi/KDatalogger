@@ -123,9 +123,11 @@ La partizione `storage` non può essere scritta contemporaneamente da firmware e
 1. Modalità USB dall'HMI, copiare il file `.bin` nella root del disco, espellere il disco dal PC.
 2. Al rientro dalla modalità USB (e a ogni accensione) il datalogger cerca il file, lo installa
    nello slot OTA inattivo mostrando l'avanzamento, lo cancella e si riavvia.
-3. La nuova versione viene confermata dopo 10 s continuativi di funzionamento normale (volume
-   leggibile, acquisizione che produce campioni). Se si blocca, si resetta o fallisce il controllo,
-   il bootloader torna alla versione precedente. L'esito compare sul display fino a "OK".
+3. La versione in uso è sullo splash di avvio (in basso a destra) e in fondo alla pagina
+   Impostazioni: dopo il riavvio mostra già quella nuova. Viene confermata dopo 15 s continuativi
+   di funzionamento normale (volume leggibile, acquisizione che produce campioni); se nel frattempo
+   si blocca, si resetta o fallisce il controllo, il bootloader torna alla versione precedente e il
+   display lo segnala fino a "OK". Un aggiornamento riuscito non mostra messaggi.
 
 Regole (`components/fw_update`):
 

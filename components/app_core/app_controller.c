@@ -32,8 +32,11 @@
 #define KDL_ACQUISITION_ENABLED 1
 
 #define APP_CONTROLLER_LOOP_PERIOD_MS 500U
-/** Uninterrupted normal-mode run a freshly updated image must survive. */
-#define APP_CONTROLLER_SELF_TEST_US   (10LL * 1000LL * 1000LL)
+/** Uninterrupted normal-mode run a freshly updated image must survive. Long
+ *  enough to cover the whole power-up sequence -- 2 s splash, then the date
+ *  prompt that dismisses itself after 10 s -- and invisible to the operator,
+ *  who gets no notice on success. */
+#define APP_CONTROLLER_SELF_TEST_US   (15LL * 1000LL * 1000LL)
 /** Slack on top of two acquisition periods before a sample counts as stale. */
 #define APP_CONTROLLER_SAMPLE_SLACK_MS 1000U
 /** Lets the GUI draw "restarting" before the reset cuts it off. */
@@ -111,6 +114,7 @@ esp_err_t app_controller_start(void)
     s_normal_since_us = esp_timer_get_time();
     s_fw_scan_requested = true;
     ESP_LOGI(TAG, "KDatalogger services ready in normal mode");
+
     return ESP_OK;
 }
 

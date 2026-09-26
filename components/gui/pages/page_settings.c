@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "display_driver.h"
+#include "esp_app_desc.h"
 #include "kdl_theme.h"
 #include "kdl_text.h"
 #include "kdl_widgets.h"
@@ -22,6 +23,7 @@
 #define PAGE_SETTINGS_CARET_W   10
 #define PAGE_SETTINGS_VALUE_W   110
 #define PAGE_SETTINGS_HINT_W    26
+#define PAGE_SETTINGS_FOOTER_LEN 48
 
 /** Selectable acquisition periods, in ms. A preset list rather than a free
  *  counter: stepping one millisecond at a time through a 100-5000 range with
@@ -243,6 +245,21 @@ static void on_show(lv_obj_t *content)
                                              LV_TEXT_ALIGN_RIGHT);
         lv_label_set_text(s_hints[index], s_row_hints[index]);
     }
+
+    /* Firmware version pinned to the bottom of the page: plain text, not a
+     * row, so the cursor never stops on something that cannot be changed. */
+    lv_obj_t *spacer = lv_obj_create(content);
+    lv_obj_add_style(spacer, &kdl_style_panel, 0);
+    lv_obj_set_size(spacer, 1, 1);
+    lv_obj_set_flex_grow(spacer, 1);
+
+    char footer[PAGE_SETTINGS_FOOTER_LEN];
+    snprintf(footer, sizeof(footer), KDL_TXT_SETTINGS_FIRMWARE_FMT,
+             esp_app_get_description()->version);
+    lv_obj_t *version = page_settings_label(content, KDL_FONT_MICRO, PAGE_SETTINGS_INNER_W,
+                                            LV_TEXT_ALIGN_RIGHT);
+    lv_obj_set_style_text_color(version, KDL_COLOR_INK_MUTED, 0);
+    lv_label_set_text(version, footer);
 
     page_settings_refresh();
     page_settings_apply_keys();

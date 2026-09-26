@@ -60,6 +60,9 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static fw_update_status_t s_status;
 static bool s_pending_verify;
 static fw_update_record_t s_record;
+/** This boot is the first run of an installed update: a copy of it left on
+ *  the volume is the file the install could not delete, not a new request. */
+static bool s_booted_from_update;
 static uint8_t s_chunk[FW_UPDATE_CHUNK_SIZE];
 static char s_scan_paths[FW_UPDATE_MAX_FILES][FW_UPDATE_PATH_MAX];
 
@@ -77,9 +80,8 @@ static void fw_update_set_phase(fw_update_phase_t phase, uint8_t progress_percen
 
 /**
  * "Already installed" is the only notice that yields to one already pending:
- * it also fires for the file left behind when power drops between switching
- * the boot slot and deleting it, and must not hide the "installed" notice of
- * that very update.
+ * it is informational, and must not hide a rollback or a failure the
+ * operator has not seen yet.
  */
 static void fw_update_raise_notice(fw_update_notice_t notice, const char *version)
 {
@@ -189,14 +191,14 @@ esp_err_t fw_update_init(void)
         return fw_update_record_clear();
     }
 
+    s_booted_from_update = true;
     if (!s_pending_verify) {
         /* Rollback disabled when it was installed, or already confirmed. */
-        fw_update_raise_notice(FW_UPDATE_NOTICE_INSTALLED, desc->version);
         return fw_update_record_clear();
     }
 
-    /* Installed and booting for the first time: the notice waits for
-     * fw_update_confirm_running(), so a rollback cannot follow an "installed". */
+    /* Installed and booting for the first time: the record stays until
+     * fw_update_confirm_running(), so a rollback before it is still reported. */
     return ESP_OK;
 }
 
@@ -216,7 +218,6 @@ esp_err_t fw_update_confirm_running(void)
     ESP_LOGI(TAG, "Running image confirmed, rollback cancelled");
 
     if (fw_update_record_is_running()) {
-        fw_update_raise_notice(FW_UPDATE_NOTICE_INSTALLED, esp_app_get_description()->version);
         ESP_RETURN_ON_ERROR(fw_update_record_clear(), TAG, "install record not cleared");
     }
     return ESP_OK;
@@ -401,7 +402,11 @@ esp_err_t fw_update_scan(const char *dir_path, fw_update_candidate_t *out)
             if (unlink(path) != 0) {
                 ESP_LOGW(TAG, "%s: cannot remove (errno %d)", path, errno);
             }
-            fw_update_raise_notice(FW_UPDATE_NOTICE_ALREADY_INSTALLED, version);
+            /* Right after an update this is the leftover of that install
+             * (power lost before its delete): nothing to tell the operator. */
+            if (!s_booted_from_update) {
+                fw_update_raise_notice(FW_UPDATE_NOTICE_ALREADY_INSTALLED, version);
+            }
             break;
         case FW_IMAGE_DAMAGED:
             fw_update_quarantine(path);

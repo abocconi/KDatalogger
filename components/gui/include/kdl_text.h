@@ -68,6 +68,8 @@
 #define KDL_TXT_SETTINGS_DATETIME   "Data / ora"
 #define KDL_TXT_SETTINGS_BRIGHTNESS "Luminosità display"
 #define KDL_TXT_SETTINGS_NOT_SET    "non impostata"
+/** printf format, one %s: running firmware version (version.txt). */
+#define KDL_TXT_SETTINGS_FIRMWARE_FMT "Firmware v%s"
 #define KDL_TXT_KEY_UP              LV_SYMBOL_UP
 #define KDL_TXT_KEY_DOWN            LV_SYMBOL_DOWN
 #define KDL_TXT_KEY_EDIT            "Cambia"
@@ -93,6 +95,10 @@
 #define KDL_TXT_USB_ALERT_FORCE     "Disco non espulso! Premi di nuovo per uscire."
 #define KDL_TXT_KEY_EXIT            "Esci"
 
+/* -- Splash ----------------------------------------------------------------- */
+/** printf format, one %s: running firmware version (version.txt). */
+#define KDL_TXT_SPLASH_VERSION_FMT  "v%s"
+
 /* -- Firmware update page -------------------------------------------------- */
 #define KDL_TXT_FW_TITLE            "AGGIORNAMENTO"
 #define KDL_TXT_FW_WRITING          "Aggiornamento firmware"
@@ -100,9 +106,6 @@
 #define KDL_TXT_FW_WRITING_FMT      "Installazione della versione %s. Non spegnere il datalogger."
 #define KDL_TXT_FW_RESTARTING       "Aggiornamento completato"
 #define KDL_TXT_FW_RESTARTING_MSG   "Riavvio in corso..."
-#define KDL_TXT_FW_INSTALLED        "Firmware aggiornato"
-/** printf format, one %s: version now running. */
-#define KDL_TXT_FW_INSTALLED_FMT    "Versione in uso: %s."
 #define KDL_TXT_FW_ROLLED_BACK      "Aggiornamento non riuscito"
 /** printf format, one %s: version that failed to start. */
 #define KDL_TXT_FW_ROLLED_BACK_FMT  "La versione %s non si è avviata correttamente: è tornata in uso la versione precedente."

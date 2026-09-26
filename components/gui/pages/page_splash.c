@@ -1,8 +1,18 @@
 #include "pages.h"
 
+#include <stdio.h>
+
+#include "esp_app_desc.h"
 #include "kdl_splash.h"
+#include "kdl_text.h"
+#include "kdl_theme.h"
 
 #define PAGE_SPLASH_DURATION_MS 2000
+/** Version label inset from the bottom-right corner, in the dark band below
+ *  the "MEASURE ANALYZE IMPROVE" rule of the artwork. */
+#define PAGE_SPLASH_VERSION_INSET_X (-8)
+#define PAGE_SPLASH_VERSION_INSET_Y (-4)
+#define PAGE_SPLASH_VERSION_LEN 40
 
 static lv_timer_t *s_timer;
 
@@ -24,6 +34,17 @@ static void on_show(lv_obj_t *content)
     lv_obj_t *image = lv_image_create(content);
     lv_image_set_src(image, &kdl_splash_image);
     lv_obj_set_pos(image, 0, 0);
+
+    /* Shown at every boot, so right after an update the new version is on
+     * screen at once -- this is the confirmation that it took. */
+    char text[PAGE_SPLASH_VERSION_LEN];
+    snprintf(text, sizeof(text), KDL_TXT_SPLASH_VERSION_FMT, esp_app_get_description()->version);
+    lv_obj_t *version = lv_label_create(content);
+    lv_obj_set_style_text_font(version, KDL_FONT_MICRO, 0);
+    lv_obj_set_style_text_color(version, KDL_COLOR_STATUS_CAPTION, 0);
+    lv_label_set_text(version, text);
+    lv_obj_align(version, LV_ALIGN_BOTTOM_RIGHT, PAGE_SPLASH_VERSION_INSET_X,
+                 PAGE_SPLASH_VERSION_INSET_Y);
 
     s_timer = lv_timer_create(splash_timer_cb, PAGE_SPLASH_DURATION_MS, NULL);
     lv_timer_set_repeat_count(s_timer, 1);
