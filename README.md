@@ -115,6 +115,31 @@ La partizione `storage` non può essere scritta contemporaneamente da firmware e
   5 s: è la via d'uscita se il PC si è bloccato o il cavo è stato staccato (la scheda non rileva
   VBUS, quindi lo scollegamento non sempre si vede).
 
+### Aggiornamento firmware da USB
+
+`idf.py build` produce, oltre a `build/KDatalogger.bin`, la copia `build/KDatalogger_v<versione>.bin`
+(versione da `version.txt`, da incrementare a ogni rilascio). Per aggiornare:
+
+1. Modalità USB dall'HMI, copiare il file `.bin` nella root del disco, espellere il disco dal PC.
+2. Al rientro dalla modalità USB (e a ogni accensione) il datalogger cerca il file, lo installa
+   nello slot OTA inattivo mostrando l'avanzamento, lo cancella e si riavvia.
+3. La nuova versione viene confermata dopo 10 s continuativi di funzionamento normale (volume
+   leggibile, acquisizione che produce campioni). Se si blocca, si resetta o fallisce il controllo,
+   il bootloader torna alla versione precedente. L'esito compare sul display fino a "OK".
+
+Regole (`components/fw_update`):
+
+- Il file si riconosce dal contenuto, non dal nome: header ESP32-S3 e project name `KDatalogger`.
+  Qualsiasi altro `.bin` resta dov'è, ignorato, come i file `._*` che macOS scrive sul disco.
+- File troncato o danneggiato (anche per un disco scollegato senza espellerlo): rinominato in
+  `.bad`, firmware invariato. File identico al firmware in uso: cancellato. Più file validi:
+  nessuna installazione finché non ne resta uno.
+- Mai durante una registrazione: se IN1 è attivo, l'aggiornamento aspetta la fine della sessione.
+- Il confronto è sull'immagine (SHA dell'ELF), non sul numero di versione: una build diversa con la
+  stessa versione viene installata comunque, e si può anche tornare a una versione precedente.
+- Nessuna firma: il controllo evita file sbagliati o incompleti, non protegge da manomissioni.
+  Un firmware che supera l'autotest ma non sa più aggiornarsi va ripristinato via seriale.
+
 ## Build
 
 Richiede ESP-IDF (v6.x) con target `esp32s3` configurato. Il progetto usa una partition table
