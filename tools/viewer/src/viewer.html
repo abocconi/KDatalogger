@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KDatalogger – grafici</title>
+<!--
+  Visualizzatore dei log del KDatalogger. Firmware @@FW_VERSION@@.
+  File generato da tools/gen_viewer.py: non modificarlo a mano.
+
+  Grafici: uPlot (https://github.com/leeoniya/uPlot)
+@@UPLOT_LICENSE@@
+-->
+<style>
+/*@@INLINE_CSS vendor/uPlot.min.css@@*/
+</style>
+<style>
+:root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --hover: rgba(11, 11, 11, 0.05);
+    --accent: #2a78d6;
+    --accent-ink: #ffffff;
+    --select: rgba(42, 120, 214, 0.12);
+    --critical: #d03b3b;
+    --warning: #b57614;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        color-scheme: dark;
+        --page: #0d0d0d;
+        --surface: #1a1a19;
+        --ink: #ffffff;
+        --ink-2: #c3c2b7;
+        --muted: #898781;
+        --grid: #2c2c2a;
+        --axis: #383835;
+        --border: rgba(255, 255, 255, 0.10);
+        --hover: rgba(255, 255, 255, 0.06);
+        --accent: #3987e5;
+        --select: rgba(57, 135, 229, 0.18);
+        --warning: #fab219;
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+        --series-4: #c98500;
+        --series-5: #d55181;
+        --series-6: #008300;
+        --series-7: #9085e9;
+        --series-8: #e66767;
+    }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+button, select, input { font: inherit; color: inherit; }
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; font-size: 16px; margin-right: auto; }
+.brand span { color: var(--ink-2); font-weight: 400; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn:hover { background: var(--hover); }
+.btn:disabled { opacity: 0.45; cursor: default; background: var(--surface); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:focus-visible, .seg button:focus-visible, .chip:focus-visible, .key:focus-visible,
+select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* min-width: 0 lets the legend tables scroll inside their panel instead of
+ * widening the page past a phone screen (flex items default to min-content). */
+main { flex: 1; width: 100%; min-width: 0; max-width: 1400px; margin: 0 auto; padding: 16px; }
+
+.controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 20px;
+    margin-bottom: 12px;
+}
+.controls[hidden] { display: none; }
+.controls label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.controls select {
+    min-height: 34px;
+    max-width: 280px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+}
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button {
+    min-height: 34px;
+    padding: 6px 14px;
+    border: 0;
+    background: var(--surface);
+    cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+.files { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    max-width: 100%;
+}
+.chip.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.chip-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+}
+.chip-text { display: flex; flex-direction: column; min-width: 0; }
+.chip-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-meta { color: var(--ink-2); font-size: 12px; }
+.chip-close {
+    border: 0;
+    border-left: 1px solid var(--border);
+    background: none;
+    padding: 0 10px;
+    cursor: pointer;
+    color: var(--ink-2);
+    font-size: 16px;
+}
+.chip-close:hover, .chip-main:hover { background: var(--hover); }
+
+.line-key { display: inline-block; width: 16px; height: 0; border-top: 2px solid; flex: none; }
+
+.messages { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.msg {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: 6px;
+    background: var(--surface);
+}
+.msg.error { border-left-color: var(--critical); }
+.msg-text { flex: 1; }
+.msg button { border: 0; background: none; cursor: pointer; color: var(--ink-2); }
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 12px 8px;
+    margin-bottom: 16px;
+}
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 4px 6px; }
+.panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.panel-sub { color: var(--ink-2); }
+.cursor-time { margin-left: auto; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.chart { width: 100%; }
+
+.table-wrap { overflow-x: auto; margin-top: 4px; }
+table.legend { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.legend th {
+    text-align: right;
+    font-weight: 500;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 6px 8px 6px 20px;
+    border-bottom: 1px solid var(--grid);
+    white-space: nowrap;
+    min-width: 84px;
+}
+table.legend th:first-child { text-align: left; padding-left: 8px; min-width: 180px; }
+table.legend td { padding: 3px 8px 3px 20px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+table.legend td:first-child { text-align: left; padding-left: 8px; }
+table.legend tr:last-child td { border-bottom: 0; }
+table.legend td.cur { color: var(--ink); font-weight: 600; }
+table.legend td.stat { color: var(--ink-2); }
+table.legend tr.off td { color: var(--muted); font-weight: 400; }
+.key {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: none;
+    padding: 4px 6px;
+    margin-left: -6px;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+}
+.key:hover { background: var(--hover); }
+.key:disabled { cursor: default; background: none; }
+tr.off .line-key { border-top-style: dashed; opacity: 0.5; }
+.nodata { color: var(--muted); font-style: italic; }
+
+.empty {
+    border: 2px dashed var(--axis);
+    border-radius: 12px;
+    padding: 56px 24px;
+    text-align: center;
+    color: var(--ink-2);
+    background: var(--surface);
+}
+.empty h1 { font-size: 20px; color: var(--ink); margin: 0 0 8px; }
+.empty p { margin: 6px 0; }
+.empty .btn { margin-top: 14px; }
+.hint { color: var(--muted); font-size: 13px; }
+
+.drop-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: var(--select);
+    border: 3px dashed var(--accent);
+    font-size: 20px;
+    font-weight: 600;
+    pointer-events: none;
+}
+body.dragging .drop-overlay { display: flex; }
+
+footer { padding: 12px 16px; color: var(--muted); font-size: 12px; text-align: center; }
+
+.u-select { background: var(--select); }
+.u-cursor-x { border-right: 1px dashed var(--muted); }
+.u-cursor-y { display: none; }
+.u-over, .u-under { cursor: crosshair; }
+
+@media print {
+    .topbar, .controls, .files .chip-close, .messages, footer { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">KDatalogger <span>· grafici dei log</span></div>
+    <div class="actions">
+        <label class="btn primary" id="btn-open">
+            Apri file CSV…
+            <input type="file" id="file-input" accept=".csv,.CSV,text/csv" multiple hidden>
+        </label>
+        <button type="button" class="btn" id="btn-reset" disabled>Vista intera</button>
+        <button type="button" class="btn" id="btn-png" disabled>Salva immagine</button>
+    </div>
+</header>
+
+<main>
+    <div class="messages" id="messages"></div>
+
+    <section class="controls" id="controls" hidden>
+        <div class="seg" role="group" aria-label="Modalità">
+            <button type="button" id="mode-single" aria-pressed="true">Un file</button>
+            <button type="button" id="mode-compare" aria-pressed="false">Confronta file</button>
+        </div>
+        <label id="file-field">File <select id="sel-file"></select></label>
+        <label id="channel-field" hidden>Canale <select id="sel-channel"></select></label>
+    </section>
+
+    <section class="files" id="files" aria-label="File aperti"></section>
+
+    <section id="panels"></section>
+
+    <section class="empty" id="empty">
+        <h1>Trascina qui i file CSV del datalogger</h1>
+        <p>oppure premi <strong>Apri file CSV…</strong> e scegli i file nella cartella <em>logs</em>.</p>
+        <p class="hint">Puoi aprire più file insieme per confrontare le tirate.
+            I dati restano sul computer: niente viene inviato in rete.</p>
+        <label class="btn primary">
+            Apri file CSV…
+            <input type="file" id="file-input-empty" accept=".csv,.CSV,text/csv" multiple hidden>
+        </label>
+    </section>
+</main>
+
+<div class="drop-overlay">Rilascia i file per aprirli</div>
+
+<footer>
+    Trascina sul grafico per ingrandire una zona, doppio click per tornare alla vista intera.
+    · Firmware @@FW_VERSION@@
+</footer>
+
+<script>
+//@@INLINE_JS vendor/uPlot.iife.min.js@@
+</script>
+<script>
+//@@INLINE_JS src/csv_parser.js@@
+</script>
+<script>
+//@@INLINE_JS src/app.js@@
+</script>
+</body>
+</html>
