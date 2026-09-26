@@ -28,10 +28,12 @@
  * ESP_LVGL_PORT_INIT_CONFIG) so a 1s acquisition/logging cycle can never
  * preempt and stall the display flush task. */
 #define ACQUISITION_TASK_PRIORITY 3
-/* The per-sample sensor line is ~220 chars: at 115200 baud that is ~19 ms of
+/* Once-a-second line with every channel, for bench work on the inputs; off
+ * in normal use. The line is ~220 chars: at 115200 baud that is ~19 ms of
  * blocking UART writes inside the loop, which would dominate the cycle at
  * short acquisition periods. Rate-limit it so diagnostics cost stays flat
  * regardless of the configured period. */
+#define ACQUISITION_VERBOSE_LOG_ENABLED 0
 #define ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US 1000000
 
 static const char *TAG = "acquisition";
@@ -346,7 +348,9 @@ static void acquisition_task(void *arg)
     s_active = true;
 
     TickType_t last_wake_time = xTaskGetTickCount();
+#if ACQUISITION_VERBOSE_LOG_ENABLED
     int64_t last_verbose_log_us = 0;
+#endif
 
     while (s_run_task) {
         acquisition_sync_recording_state();
@@ -365,6 +369,7 @@ static void acquisition_task(void *arg)
             ESP_LOGW(TAG, "trend update failed: %s", esp_err_to_name(trend_err));
         }
 
+#if ACQUISITION_VERBOSE_LOG_ENABLED
         int64_t now_us = esp_timer_get_time();
         if (now_us - last_verbose_log_us >= ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US) {
             last_verbose_log_us = now_us;
@@ -386,6 +391,7 @@ static void acquisition_task(void *arg)
                  (unsigned)sample.analog_valid_mask,
                  sample.digital_inputs, sample.digital_valid_mask);
         }
+#endif
 
         if (logger_service_is_active() && logger_service_log_sample(&sample) != ESP_OK) {
             ESP_LOGW(TAG, "Sample logging failed");

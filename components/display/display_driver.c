@@ -37,7 +37,9 @@
 #define DISPLAY_ROTATE_MIRROR_X true
 #define DISPLAY_ROTATE_MIRROR_Y true
 #define DISPLAY_INVERT_COLOR true
-#define DISPLAY_LVGL_DIAG_ENABLED 1
+/* Once-a-second LVGL refresh/flush counters, for work on the refresh budget;
+ * off in normal use. */
+#define DISPLAY_LVGL_DIAG_ENABLED 0
 
 static const char *TAG = "display_driver";
 
