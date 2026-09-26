@@ -40,7 +40,7 @@ static void on_show(lv_obj_t *content)
     char text[PAGE_SPLASH_VERSION_LEN];
     snprintf(text, sizeof(text), KDL_TXT_SPLASH_VERSION_FMT, esp_app_get_description()->version);
     lv_obj_t *version = lv_label_create(content);
-    lv_obj_set_style_text_font(version, KDL_FONT_MICRO, 0);
+    lv_obj_set_style_text_font(version, KDL_FONT_BODY, 0);
     lv_obj_set_style_text_color(version, KDL_COLOR_STATUS_CAPTION, 0);
     lv_label_set_text(version, text);
     lv_obj_align(version, LV_ALIGN_BOTTOM_RIGHT, PAGE_SPLASH_VERSION_INSET_X,

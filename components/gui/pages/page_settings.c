@@ -256,7 +256,7 @@ static void on_show(lv_obj_t *content)
     char footer[PAGE_SETTINGS_FOOTER_LEN];
     snprintf(footer, sizeof(footer), KDL_TXT_SETTINGS_FIRMWARE_FMT,
              esp_app_get_description()->version);
-    lv_obj_t *version = page_settings_label(content, KDL_FONT_MICRO, PAGE_SETTINGS_INNER_W,
+    lv_obj_t *version = page_settings_label(content, KDL_FONT_KEY, PAGE_SETTINGS_INNER_W,
                                             LV_TEXT_ALIGN_RIGHT);
     lv_obj_set_style_text_color(version, KDL_COLOR_INK_MUTED, 0);
     lv_label_set_text(version, footer);
