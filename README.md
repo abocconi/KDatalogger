@@ -84,7 +84,7 @@ segnale) per avviare/fermare la sessione senza passare dalla GUI.
 Ogni sessione di registrazione crea `/data/logs/log_NNNN.csv`. Il file è pensato per essere aperto
 con doppio click in Excel italiano: separatore `;`, decimale `,`, UTF-8 con BOM.
 
-Spazio: la partizione dati è di circa 6 MB. Il logger cancella da solo i log più vecchi quando lo
+Spazio: la partizione dati è di circa 5 MB. Il logger cancella da solo i log più vecchi quando lo
 spazio libero scende sotto 256 KB (controllo all'avvio della sessione e a ogni flush, ogni 2 s) o i
 file superano 500: la registrazione non si ferma mai per disco pieno. Se un file non si apre o una
 scrittura fallisce, la barra di stato mostra `ERRORE LOG` finché la sessione successiva non parte
@@ -133,8 +133,13 @@ richiede (reset via USB-Serial-JTAG nativo, nessun pulsante BOOT da tenere premu
 normali). Se il collegamento resta bloccato su "Connecting...", verificare che GPIO0 non sia
 vincolato da altro hardware sulla scheda.
 
-Partizionamento (`partitions.csv`, custom): bootloader a `0x0`, partition table a `0x8000`, app
-(`factory`, 2 MB) a `0x10000`, dati FAT (`storage`) da `0x210000` a fine flash (8 MB).
+Partizionamento (`partitions.csv`, custom): bootloader a `0x0`, partition table a `0x8000`,
+`otadata` a `0xd000`, due slot app OTA da 1,5 MB (`ota_0` a `0x10000`, `ota_1` a `0x190000`), dati
+FAT (`storage`) da `0x310000` a fine flash (8 MB).
+
+Una scheda programmata con la tabella precedente (`factory` da 2 MB) va cancellata per intero
+una volta (`idf.py -p PORT erase-flash flash`): lo storage cambia offset e va riformattato, quindi
+i log presenti vanno salvati prima.
 
 ### Opzione A — `idf.py flash` (ambiente ESP-IDF gia' installato)
 
@@ -154,12 +159,13 @@ esptool.py version   # verifica installazione
 ```
 
 Servono comunque i binari compilati (`idf.py build`, oppure quelli gia' presenti in `build/` da una
-build precedente). Flash manuale specificando i tre binari con i relativi offset:
+build precedente). Flash manuale specificando i quattro binari con i relativi offset:
 
 ```bash
 esptool.py --chip esp32s3 -p PORT -b 460800 write_flash \
   0x0     build/bootloader/bootloader.bin \
   0x8000  build/partition_table/partition-table.bin \
+  0xd000  build/ota_data_initial.bin \
   0x10000 build/KDatalogger.bin
 ```
 
@@ -183,6 +189,7 @@ Richiede un browser Chromium (Chrome o Edge) — Firefox e Safari non supportano
    altre):
    - `bootloader/bootloader.bin` → `0x0`
    - `partition_table/partition-table.bin` → `0x8000`
+   - `ota_data_initial.bin` → `0xd000`
    - `KDatalogger.bin` → `0x10000`
 5. "Program" e attendere il completamento.
 

@@ -18,6 +18,14 @@ CONFIG_SPIRAM_USE_MALLOC=y
 
 CONFIG_FATFS_LFN_HEAP=y
 
+# Firmware update from the USB volume (components/fw_update): a new image
+# boots pending verification and is rolled back by the bootloader if it
+# resets before app_controller's self-test confirms it.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# app_main hosts the controller loop, which runs the update: FATFS, OTA
+# writes and image verification on top of the boot-time init.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
 # On chips with USB Serial JTAG, disable secondary console which does not make sense when using console component
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 

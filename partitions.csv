@@ -1,8 +1,12 @@
-# Name,   Type, SubType, Offset,  Size, Flags
+# Name,   Type, SubType, Offset,   Size, Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-# App 2 MB (~1.06 MB used, ~48% headroom). Storage takes the rest of the 8 MB
-# flash, 0x210000-0x800000: operators rarely clear old logs, so capacity wins.
-factory,  app,  factory, 0x10000, 2M,
-storage,  data, fat,     ,        0x5F0000,
+nvs,      data, nvs,     0x9000,   0x4000,
+otadata,  data, ota,     0xd000,   0x2000,
+phy_init, data, phy,     0xf000,   0x1000,
+# Two 1.5 MB OTA slots for the firmware update from the USB volume (fw_update):
+# the new image is written to the slot not running. App ~1.0 MB, ~33% headroom.
+ota_0,    app,  ota_0,   0x10000,  0x180000,
+ota_1,    app,  ota_1,   0x190000, 0x180000,
+# Storage takes the rest of the 8 MB flash, 0x310000-0x800000: operators
+# rarely clear old logs, so capacity wins over bigger app slots.
+storage,  data, fat,     0x310000, 0x4F0000,
