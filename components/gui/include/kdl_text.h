@@ -50,6 +50,11 @@
 /** printf format, two %d: session minimum and maximum. U+00B7 MIDDLE DOT. */
 #define KDL_TXT_EXTREMES_FMT        "min %d \xC2\xB7 max %d"
 #define KDL_TXT_EXTREMES_NONE       "min -- \xC2\xB7 max --"
+/** Engine speed tile: session peak. */
+#define KDL_TXT_RPM_PEAK_FMT        "max %d"
+#define KDL_TXT_RPM_PEAK_NONE       "max --"
+/** Pressure cell: configured sensor out of its range (wiring fault). */
+#define KDL_TXT_VALUE_SENSOR_FAULT  "ERR"
 
 /* -- Graph page ------------------------------------------------------------ */
 #define KDL_TXT_GRAPH_TITLE         "GRAFICO"
@@ -68,6 +73,18 @@
 #define KDL_TXT_SETTINGS_DATETIME   "Data / ora"
 #define KDL_TXT_SETTINGS_BRIGHTNESS "Luminosità display"
 #define KDL_TXT_SETTINGS_NOT_SET    "non impostata"
+#define KDL_TXT_SETTINGS_ZERO       "Zero pressioni"
+#define KDL_TXT_KEY_ZERO            "Azzera"
+/** printf format, two %u: inputs zeroed, inputs with a sensor configured. */
+#define KDL_TXT_SETTINGS_ZERO_FMT   "azzerati %u di %u"
+#define KDL_TXT_SETTINGS_ZERO_NONE  "nessun sensore"
+#define KDL_TXT_SETTINGS_ZERO_FAIL  "non riuscito"
+/** Outcome of the last read of the sensor configuration file. */
+#define KDL_TXT_CONFIG_OK           "sensori.ini: OK"
+#define KDL_TXT_CONFIG_CREATED      "sensori.ini: creato"
+#define KDL_TXT_CONFIG_UNREAD       "sensori.ini: non letto"
+/** printf format, one %u: first line with an error. */
+#define KDL_TXT_CONFIG_ERROR_FMT    "sensori.ini: errore riga %u"
 /** printf format, one %s: running firmware version (version.txt). */
 #define KDL_TXT_SETTINGS_FIRMWARE_FMT "Firmware v%s"
 #define KDL_TXT_KEY_UP              LV_SYMBOL_UP

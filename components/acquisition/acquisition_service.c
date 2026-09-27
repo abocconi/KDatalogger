@@ -16,10 +16,15 @@
 #include "analog_inputs.h"
 #include "board_config.h"
 #include "data_model.h"
+#include "data_model_channels.h"
 #include "digital_inputs.h"
 #include "logger_service.h"
 #include "max31855.h"
+#include "pressure_scaling.h"
+#include "sensor_config.h"
 #include "settings_service.h"
+#include "tach_math.h"
+#include "tachometer.h"
 #include "trend_service.h"
 
 #define ACQUISITION_TASK_NAME "acquisition"
@@ -40,6 +45,9 @@
  * regardless of the configured period. */
 #define ACQUISITION_VERBOSE_LOG_ENABLED 0
 #define ACQUISITION_VERBOSE_LOG_MIN_INTERVAL_US 1000000
+/* Conversions averaged per analog reading. ~16 x 5 oneshot reads cost a few
+ * ms per cycle and bring the ESP32 ADC noise down to a couple of LSB. */
+#define ACQUISITION_ADC_SAMPLES 16U
 
 static const char *TAG = "acquisition";
 
@@ -51,6 +59,7 @@ static volatile bool s_active;
 static bool s_use_max31855;
 static bool s_use_digital_inputs;
 static bool s_use_analog_inputs;
+static bool s_use_tachometer;
 static int s_record_enable_gpio = -1;
 /** Recording state last handed to the logger; only touched by the acquisition task. */
 static bool s_recording_requested;
@@ -59,6 +68,10 @@ static kdl_sensor_extremes_t s_extremes;
 static SemaphoreHandle_t s_sample_mutex;
 /** Given by acquisition_service_stop() to cut the inter-cycle wait short. */
 static SemaphoreHandle_t s_stop_signal;
+/** Tachometer state, only touched by the acquisition task. */
+static float s_engine_rpm;
+static uint32_t s_tach_min_period_us;
+static uint32_t s_tach_max_period_us;
 
 #define ACQUISITION_SAMPLE_LOCK_TIMEOUT_MS 50
 
@@ -101,6 +114,12 @@ static void acquisition_update_extremes(const kdl_sensor_sample_t *sample)
             s_extremes.thermocouple_max_c[index] = value;
         }
     }
+
+    if (sample->engine_rpm_valid
+        && (!s_extremes.rpm_max_valid || sample->engine_rpm > s_extremes.rpm_max)) {
+        s_extremes.rpm_max = sample->engine_rpm;
+        s_extremes.rpm_max_valid = true;
+    }
 }
 
 static uint64_t acquisition_get_uptime_ms(void)
@@ -142,6 +161,7 @@ static analog_inputs_config_t acquisition_build_analog_input_config(void)
         .channel_count = board_config_analog_input_count(),
         .atten = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .samples_per_read = ACQUISITION_ADC_SAMPLES,
     };
 
     for (size_t channel = 0; channel < config.channel_count && channel < ANALOG_INPUTS_MAX_CHANNELS; ++channel) {
@@ -252,14 +272,84 @@ static void acquisition_fill_digital_inputs(kdl_sensor_sample_t *sample)
 static void acquisition_fill_analog_inputs(kdl_sensor_sample_t *sample)
 {
     uint32_t valid_mask = 0;
-    esp_err_t err = analog_inputs_read(sample->analog_inputs, &valid_mask);
+    uint32_t saturated_mask = 0;
+    esp_err_t err = analog_inputs_read(sample->analog_inputs, &valid_mask, &saturated_mask);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Analog input read failed: %s", esp_err_to_name(err));
         sample->analog_valid_mask = 0;
         return;
     }
 
+    /* Pin voltage back to the terminal, where the sensor datasheet applies. */
+    const float ratio = board_config_analog_input_divider_ratio();
+    for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
+        sample->analog_inputs[index] /= ratio;
+    }
     sample->analog_valid_mask = (uint8_t)valid_mask;
+    sample->analog_saturated_mask = (uint8_t)saturated_mask;
+}
+
+static void acquisition_fill_pressures(kdl_sensor_sample_t *sample, const sensor_config_t *config)
+{
+    for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
+        const uint8_t bit = (uint8_t)(1U << index);
+        if ((sample->analog_valid_mask & bit) == 0U) {
+            continue;
+        }
+
+        float bar = 0.0f;
+        const pressure_status_t status = pressure_scaling_convert(
+            &config->pressure[index], sample->analog_inputs[index],
+            settings_service_get_pressure_zero_v(index),
+            (sample->analog_saturated_mask & bit) != 0U, &bar);
+        switch (status) {
+        case PRESSURE_STATUS_OK:
+            sample->pressures_bar[index] = bar;
+            sample->pressure_valid_mask |= bit;
+            break;
+        case PRESSURE_STATUS_FAULT_LOW:
+        case PRESSURE_STATUS_FAULT_HIGH:
+            sample->pressure_fault_mask |= bit;
+            break;
+        case PRESSURE_STATUS_DISABLED:
+        default:
+            break;
+        }
+    }
+}
+
+static void acquisition_fill_engine_rpm(kdl_sensor_sample_t *sample, const tach_cfg_t *config)
+{
+    if (!s_use_tachometer || !config->enabled) {
+        s_engine_rpm = 0.0f;
+        return;
+    }
+
+    /* Limits follow the configuration, re-read every cycle like the period. */
+    const uint32_t min_period_us = tach_math_min_period_us(config);
+    const uint32_t max_period_us = tach_math_timeout_us(config);
+    if (min_period_us != s_tach_min_period_us || max_period_us != s_tach_max_period_us) {
+        const esp_err_t limit_err = tachometer_set_period_limits(min_period_us, max_period_us);
+        if (limit_err != ESP_OK) {
+            ESP_LOGW(TAG, "tachometer limits not applied: %s", esp_err_to_name(limit_err));
+            return;
+        }
+        s_tach_min_period_us = min_period_us;
+        s_tach_max_period_us = max_period_us;
+    }
+
+    tachometer_reading_t reading;
+    const esp_err_t err = tachometer_take(&reading);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "tachometer read failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    const int64_t since_last_edge_us = esp_timer_get_time() - reading.last_edge_us;
+    s_engine_rpm = tach_math_update(config, s_engine_rpm, reading.periods, reading.ticks_sum,
+                                    reading.resolution_hz, reading.edge_seen, since_last_edge_us);
+    sample->engine_rpm = s_engine_rpm;
+    sample->engine_rpm_valid = true;
 }
 
 static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
@@ -269,9 +359,14 @@ static void acquisition_fill_sample(kdl_sensor_sample_t *sample)
 
     /* A group whose driver failed to start keeps the all-zero valid mask left
      * by the memset above, so its channels read as invalid everywhere. */
+    sensor_config_t config;
+    sensor_config_get(&config);
+
     if (s_use_analog_inputs) {
         acquisition_fill_analog_inputs(sample);
+        acquisition_fill_pressures(sample, &config);
     }
+    acquisition_fill_engine_rpm(sample, &config.tach);
     if (s_use_max31855) {
         acquisition_fill_max31855_thermocouples(sample);
     }
@@ -390,7 +485,9 @@ static void acquisition_task(void *arg)
             last_verbose_log_us = now_us;
             ESP_LOGI(TAG,
                  "[%"PRIu64"ms] TC(C): %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s %.2f%s"
-                 " | AI(V): %.3f %.3f %.3f %.3f %.3f (mask=0x%02x)"
+                 " | AI(V): %.3f %.3f %.3f %.3f %.3f (mask=0x%02x sat=0x%02x)"
+                 " | P(bar): %.2f %.2f %.2f %.2f %.2f (mask=0x%02x fault=0x%02x)"
+                 " | RPM: %.0f%s"
                  " | DI: 0x%02"PRIx32" (mask=0x%02"PRIx32")",
                  sample.uptime_ms,
                  sample.thermocouples_c[0], (sample.thermocouple_valid_mask & (1U << 0)) ? "*" : "!",
@@ -403,7 +500,11 @@ static void acquisition_task(void *arg)
                  sample.thermocouples_c[7], (sample.thermocouple_valid_mask & (1U << 7)) ? "*" : "!",
                  sample.analog_inputs[0], sample.analog_inputs[1], sample.analog_inputs[2],
                  sample.analog_inputs[3], sample.analog_inputs[4],
-                 (unsigned)sample.analog_valid_mask,
+                 (unsigned)sample.analog_valid_mask, (unsigned)sample.analog_saturated_mask,
+                 sample.pressures_bar[0], sample.pressures_bar[1], sample.pressures_bar[2],
+                 sample.pressures_bar[3], sample.pressures_bar[4],
+                 (unsigned)sample.pressure_valid_mask, (unsigned)sample.pressure_fault_mask,
+                 sample.engine_rpm, sample.engine_rpm_valid ? "*" : "!",
                  sample.digital_inputs, sample.digital_valid_mask);
         }
 #endif
@@ -434,6 +535,7 @@ esp_err_t acquisition_service_init(void)
     s_use_max31855 = false;
     s_use_digital_inputs = false;
     s_use_analog_inputs = false;
+    s_use_tachometer = false;
     s_record_enable_gpio = -1;
     memset(&s_last_sample, 0, sizeof(s_last_sample));
 
@@ -496,6 +598,19 @@ esp_err_t acquisition_service_init(void)
         }
     }
 
+    const int tachometer_gpio = board_config_tachometer_gpio();
+    if (tachometer_gpio < 0) {
+        ESP_LOGW(TAG, "Tachometer pin not configured, engine speed will read as invalid");
+    } else {
+        esp_err_t tach_err = tachometer_init(tachometer_gpio);
+        if (tach_err != ESP_OK) {
+            ESP_LOGE(TAG, "Tachometer init failed, engine speed will read as invalid: %s",
+                     esp_err_to_name(tach_err));
+        } else {
+            s_use_tachometer = true;
+        }
+    }
+
     analog_inputs_config_t analog_config = acquisition_build_analog_input_config();
     if (!board_config_analog_inputs_has_valid_pins() || !analog_inputs_has_valid_pins(&analog_config)) {
         ESP_LOGE(TAG, "Analog input pins not configured, analog inputs will read as invalid");
@@ -532,6 +647,18 @@ esp_err_t acquisition_service_start(void)
     if (trend_err != ESP_OK) {
         ESP_LOGW(TAG, "trend reset failed: %s", esp_err_to_name(trend_err));
     }
+
+    /* The capture ISR kept accumulating while acquisition was stopped (USB
+     * mode): averaged into the first cycle, those periods would show a speed
+     * from minutes ago. */
+    if (s_use_tachometer) {
+        tachometer_reading_t stale;
+        esp_err_t tach_err = tachometer_take(&stale);
+        if (tach_err != ESP_OK) {
+            ESP_LOGW(TAG, "tachometer reset failed: %s", esp_err_to_name(tach_err));
+        }
+    }
+    s_engine_rpm = 0.0f;
 
     s_run_task = true;
     TaskHandle_t task_handle = NULL;
@@ -612,4 +739,46 @@ esp_err_t acquisition_service_reset_extremes(void)
     memset(&s_extremes, 0, sizeof(s_extremes));
     xSemaphoreGive(s_sample_mutex);
     return ESP_OK;
+}
+
+esp_err_t acquisition_service_zero_pressures(acquisition_zero_result_t *out)
+{
+    ESP_RETURN_ON_FALSE(out != NULL, ESP_ERR_INVALID_ARG, TAG, "out is null");
+    memset(out, 0, sizeof(*out));
+    ESP_RETURN_ON_FALSE(s_active, ESP_ERR_INVALID_STATE, TAG, "acquisition not running");
+
+    kdl_sensor_sample_t sample;
+    ESP_RETURN_ON_ERROR(acquisition_service_get_latest_sample(&sample), TAG, "no sample");
+    ESP_RETURN_ON_FALSE(sample.uptime_ms != 0U, ESP_ERR_INVALID_STATE, TAG, "no sample yet");
+
+    sensor_config_t config;
+    sensor_config_get(&config);
+
+    float zero_v[DATA_MODEL_ANALOG_INPUT_COUNT];
+    for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
+        const uint8_t bit = (uint8_t)(1U << index);
+        zero_v[index] = settings_service_get_pressure_zero_v(index);
+        if (!config.pressure[index].enabled) {
+            continue;
+        }
+        out->enabled_mask |= bit;
+
+        float candidate_v = 0.0f;
+        if ((sample.analog_valid_mask & bit) != 0U && (sample.analog_saturated_mask & bit) == 0U
+            && pressure_scaling_compute_zero(&config.pressure[index], sample.analog_inputs[index],
+                                             &candidate_v)) {
+            zero_v[index] = candidate_v;
+            out->zeroed_mask |= bit;
+            ESP_LOGI(TAG, "%s zero: %+.3f V", data_model_analog_channels[index].id,
+                     (double)candidate_v);
+        } else {
+            ESP_LOGW(TAG, "%s not zeroed: reading %.3f V is a fault or not near 0 bar",
+                     data_model_analog_channels[index].id, (double)sample.analog_inputs[index]);
+        }
+    }
+
+    if (out->zeroed_mask == 0U) {
+        return ESP_OK;
+    }
+    return settings_service_set_pressure_zero_v(zero_v);
 }

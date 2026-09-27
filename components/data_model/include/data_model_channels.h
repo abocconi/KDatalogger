@@ -20,5 +20,9 @@ typedef struct {
 /** @brief Thermocouple channels, index-aligned with kdl_sensor_sample_t.thermocouples_c. */
 extern const kdl_channel_info_t data_model_thermocouple_channels[DATA_MODEL_THERMOCOUPLE_COUNT];
 
-/** @brief Analog channels, index-aligned with kdl_sensor_sample_t.analog_inputs. */
+/** @brief Pressure channels on the analog inputs, index-aligned with
+ *         kdl_sensor_sample_t.analog_inputs and .pressures_bar. */
 extern const kdl_channel_info_t data_model_analog_channels[DATA_MODEL_ANALOG_INPUT_COUNT];
+
+/** @brief Engine speed, kdl_sensor_sample_t.engine_rpm. */
+extern const kdl_channel_info_t data_model_rpm_channel;

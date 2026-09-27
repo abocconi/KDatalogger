@@ -10,6 +10,9 @@
 #define ANALOG_INPUTS_UNIT_COUNT 2
 #define ANALOG_INPUTS_FALLBACK_FULL_SCALE_MV 3300.0f
 #define ANALOG_INPUTS_FALLBACK_MAX_RAW 4095.0f
+/* Distance from the top code still counted as saturated: the average of a
+ * clipped input dithers a few LSB below full scale. */
+#define ANALOG_INPUTS_SATURATION_MARGIN_RAW 8
 
 typedef struct {
     bool in_use;
@@ -29,6 +32,7 @@ typedef struct {
 static const char *TAG = "analog_inputs";
 
 static analog_inputs_config_t s_config;
+static int s_saturation_raw;
 static analog_unit_state_t s_units[ANALOG_INPUTS_UNIT_COUNT];
 static analog_channel_state_t s_channels[ANALOG_INPUTS_MAX_CHANNELS];
 static bool s_initialized;
@@ -118,7 +122,8 @@ static esp_err_t analog_inputs_ensure_unit(adc_unit_t unit_id, adc_oneshot_unit_
 
 bool analog_inputs_has_valid_pins(const analog_inputs_config_t *config)
 {
-    if (config == NULL || config->channel_count == 0 || config->channel_count > ANALOG_INPUTS_MAX_CHANNELS) {
+    if (config == NULL || config->channel_count == 0 || config->channel_count > ANALOG_INPUTS_MAX_CHANNELS
+        || config->samples_per_read == 0U || config->samples_per_read > ANALOG_INPUTS_MAX_SAMPLES) {
         return false;
     }
 
@@ -144,6 +149,10 @@ esp_err_t analog_inputs_init(const analog_inputs_config_t *config)
     memset(s_units, 0, sizeof(s_units));
     memset(s_channels, 0, sizeof(s_channels));
     s_config = *config;
+
+    /* ADC_BITWIDTH_DEFAULT is the widest the chip offers, 12 bits here. */
+    const int bits = (s_config.bitwidth == ADC_BITWIDTH_DEFAULT) ? 12 : (int)s_config.bitwidth;
+    s_saturation_raw = ((1 << bits) - 1) - ANALOG_INPUTS_SATURATION_MARGIN_RAW;
 
     adc_oneshot_chan_cfg_t channel_config = {
         .atten = s_config.atten,
@@ -184,22 +193,35 @@ esp_err_t analog_inputs_init(const analog_inputs_config_t *config)
     return ESP_OK;
 }
 
-esp_err_t analog_inputs_read(float *values_v, uint32_t *valid_mask)
+esp_err_t analog_inputs_read(float *values_v, uint32_t *valid_mask, uint32_t *saturated_mask)
 {
     ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "driver not initialized");
     ESP_RETURN_ON_FALSE(values_v != NULL, ESP_ERR_INVALID_ARG, TAG, "values_v is null");
     ESP_RETURN_ON_FALSE(valid_mask != NULL, ESP_ERR_INVALID_ARG, TAG, "valid_mask is null");
 
     uint32_t mask = 0;
+    uint32_t saturated = 0;
     for (size_t index = 0; index < s_config.channel_count; ++index) {
         int unit_index = analog_inputs_unit_index(s_channels[index].unit_id);
         ESP_RETURN_ON_FALSE(unit_index >= 0, ESP_ERR_INVALID_STATE, TAG, "invalid unit state");
 
-        int raw = 0;
-        esp_err_t err = adc_oneshot_read(s_units[unit_index].handle, s_channels[index].channel, &raw);
+        /* Averaging the codes, then converting once: the calibration curve
+         * is smooth enough over a few LSB of noise. */
+        int32_t raw_sum = 0;
+        esp_err_t err = ESP_OK;
+        for (uint32_t sample = 0; sample < s_config.samples_per_read && err == ESP_OK; ++sample) {
+            int raw_sample = 0;
+            err = adc_oneshot_read(s_units[unit_index].handle, s_channels[index].channel, &raw_sample);
+            raw_sum += raw_sample;
+        }
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "ADC read failed on channel %u: %s", (unsigned)index, esp_err_to_name(err));
             continue;
+        }
+        const int raw = (int)((raw_sum + (int32_t)(s_config.samples_per_read / 2U))
+                              / (int32_t)s_config.samples_per_read);
+        if (raw >= s_saturation_raw) {
+            saturated |= 1UL << index;
         }
 
         if (s_channels[index].calibrated && s_channels[index].cali_handle != NULL) {
@@ -219,6 +241,9 @@ esp_err_t analog_inputs_read(float *values_v, uint32_t *valid_mask)
     }
 
     *valid_mask = mask;
+    if (saturated_mask != NULL) {
+        *saturated_mask = saturated;
+    }
     return ESP_OK;
 }
 

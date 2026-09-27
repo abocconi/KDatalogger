@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
@@ -13,6 +14,7 @@
 #define SETTINGS_KEY_ACQ_PERIOD_MS "acq_period_ms"
 #define SETTINGS_KEY_BRIGHTNESS    "brightness"
 #define SETTINGS_KEY_GRAPH_WINDOW  "graph_window_s"
+#define SETTINGS_KEY_PRESSURE_ZERO "p_zero_v"
 
 static const char *TAG = "settings";
 
@@ -27,6 +29,10 @@ const uint16_t settings_graph_window_presets_s[SETTINGS_GRAPH_WINDOW_PRESET_COUN
 static volatile uint32_t s_acq_period_ms = SETTINGS_ACQ_PERIOD_MS_DEFAULT;
 static volatile uint8_t s_brightness_percent = SETTINGS_BRIGHTNESS_DEFAULT;
 static volatile uint16_t s_graph_window_s = SETTINGS_GRAPH_WINDOW_S_DEFAULT;
+/* An array, unlike the scalars above: read by the acquisition task, written
+ * by the GUI, so both sides go through s_zero_lock. */
+static float s_pressure_zero_v[DATA_MODEL_ANALOG_INPUT_COUNT];
+static portMUX_TYPE s_zero_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized;
 
 uint32_t settings_service_normalize_acquisition_period_ms(uint32_t period_ms)
@@ -105,7 +111,23 @@ esp_err_t settings_service_init(void)
 
     uint16_t stored_window_s = 0;
     esp_err_t window_err = nvs_get_u16(handle, SETTINGS_KEY_GRAPH_WINDOW, &stored_window_s);
+
+    float stored_zero_v[DATA_MODEL_ANALOG_INPUT_COUNT] = { 0 };
+    size_t zero_size = sizeof(stored_zero_v);
+    esp_err_t zero_err = nvs_get_blob(handle, SETTINGS_KEY_PRESSURE_ZERO, stored_zero_v, &zero_size);
     nvs_close(handle);
+
+    if (zero_err == ESP_OK && zero_size == sizeof(stored_zero_v)) {
+        portENTER_CRITICAL(&s_zero_lock);
+        memcpy(s_pressure_zero_v, stored_zero_v, sizeof(s_pressure_zero_v));
+        portEXIT_CRITICAL(&s_zero_lock);
+    } else if (zero_err == ESP_OK || zero_err == ESP_ERR_NVS_INVALID_LENGTH) {
+        /* Channel count changed across a firmware update: which offset
+         * belongs to which input is no longer known. */
+        ESP_LOGW(TAG, "stored pressure zero has the wrong size, discarded");
+    } else if (zero_err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "failed to read pressure zero, using none: %s", esp_err_to_name(zero_err));
+    }
 
     if (brightness_err == ESP_OK) {
         s_brightness_percent = settings_service_normalize_brightness_percent(stored_brightness);
@@ -219,5 +241,47 @@ esp_err_t settings_service_set_graph_window_s(uint16_t window_s)
 
     s_graph_window_s = normalized;
     ESP_LOGI(TAG, "graph window set to %u s", (unsigned)normalized);
+    return ESP_OK;
+}
+
+float settings_service_get_pressure_zero_v(size_t channel)
+{
+    if (channel >= DATA_MODEL_ANALOG_INPUT_COUNT) {
+        return 0.0f;
+    }
+
+    portENTER_CRITICAL(&s_zero_lock);
+    const float value = s_pressure_zero_v[channel];
+    portEXIT_CRITICAL(&s_zero_lock);
+    return value;
+}
+
+esp_err_t settings_service_set_pressure_zero_v(const float zero_v[DATA_MODEL_ANALOG_INPUT_COUNT])
+{
+    ESP_RETURN_ON_FALSE(s_initialized, ESP_ERR_INVALID_STATE, TAG, "settings not initialized");
+    ESP_RETURN_ON_FALSE(zero_v != NULL, ESP_ERR_INVALID_ARG, TAG, "zero_v is null");
+
+    portENTER_CRITICAL(&s_zero_lock);
+    const bool unchanged = memcmp(s_pressure_zero_v, zero_v, sizeof(s_pressure_zero_v)) == 0;
+    portEXIT_CRITICAL(&s_zero_lock);
+    if (unchanged) {
+        return ESP_OK;
+    }
+
+    nvs_handle_t handle;
+    ESP_RETURN_ON_ERROR(nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &handle), TAG, "nvs_open failed");
+
+    esp_err_t err = nvs_set_blob(handle, SETTINGS_KEY_PRESSURE_ZERO, zero_v,
+                                 sizeof(float) * DATA_MODEL_ANALOG_INPUT_COUNT);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to persist pressure zero");
+
+    portENTER_CRITICAL(&s_zero_lock);
+    memcpy(s_pressure_zero_v, zero_v, sizeof(s_pressure_zero_v));
+    portEXIT_CRITICAL(&s_zero_lock);
+    ESP_LOGI(TAG, "pressure zero updated");
     return ESP_OK;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -72,13 +73,26 @@ typedef struct {
     int32_t fill_w; /**< Last applied fill width, px; -1 = none yet */
 } kdl_fluid_tile_t;
 
-/** @brief One analog readout: name and scaled reading with its unit. */
+/** @brief One pressure readout: name, unit and reading. */
 typedef struct {
     lv_obj_t *root;
     lv_obj_t *value;
     const kdl_analog_desc_t *desc;
-    int8_t valid; /**< Last applied validity; -1 = none yet */
+    kdl_level_t level; /**< OK, FAULT (sensor out of range) or UNSET (input off) */
+    bool applied;      /**< level has been painted at least once */
 } kdl_analog_cell_t;
+
+/** @brief Engine speed tile: name, session peak, reading, bar. */
+typedef struct {
+    lv_obj_t *root;
+    lv_obj_t *value;
+    lv_obj_t *peak;
+    lv_obj_t *fill;
+    float full_scale;
+    int32_t track_w;
+    int32_t fill_w; /**< Last applied fill width, px; -1 = none yet  */
+    int8_t valid;   /**< Last applied validity; -1 = none yet        */
+} kdl_rpm_tile_t;
 
 /**
  * @brief Build a cylinder bank from thermocouple channels
@@ -126,8 +140,31 @@ void kdl_fluid_tile_update(kdl_fluid_tile_t *tile, const kdl_sensor_sample_t *sa
 esp_err_t kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
                                  const kdl_analog_desc_t *desc, int32_t width, int32_t height);
 
-/** @brief Refresh an analog cell from the latest sample. */
+/**
+ * @brief Refresh an analog cell from the latest sample.
+ *
+ * Shows the pressure, "ERR" in the alarm colour for a sensor out of its
+ * range (wiring fault), dashes for an input with no sensor configured.
+ */
 void kdl_analog_cell_update(kdl_analog_cell_t *cell, const kdl_sensor_sample_t *sample);
+
+/**
+ * @brief Build the engine speed tile.
+ *
+ * @param full_scale Speed at which the bar is full, rpm.
+ * @return ESP_ERR_INVALID_ARG on a NULL argument, a non-positive full scale
+ *         or a size too small for the layout.
+ */
+esp_err_t kdl_rpm_tile_create(kdl_rpm_tile_t *tile, lv_obj_t *parent, float full_scale,
+                              int32_t width, int32_t height);
+
+/**
+ * @brief Refresh the engine speed tile.
+ *
+ * @param extremes May be NULL, in which case the peak line shows dashes.
+ */
+void kdl_rpm_tile_update(kdl_rpm_tile_t *tile, const kdl_sensor_sample_t *sample,
+                         const kdl_sensor_extremes_t *extremes);
 
 /**
  * @brief Write @p text into @p label only if it differs from what is shown.

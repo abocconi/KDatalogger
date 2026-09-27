@@ -9,6 +9,7 @@
 
 #include "kdl_text.h"
 #include "kdl_theme.h"
+#include "pressure_scaling.h"
 
 static const char *TAG = "kdl_widgets";
 
@@ -51,14 +52,20 @@ static const char *TAG = "kdl_widgets";
 #define KDL_TILE_TRACK_H        5
 #define KDL_TILE_MIN_TEXT_W     60
 
-/* Analog cell. */
+/* Analog cell. The unit shares the caption row, right-aligned, so the
+ * reading gets the whole width: "2.35" is 41 px in the 26 px num face and
+ * would not fit beside "bar" (15 px) in a 59 px cell. */
 #define KDL_CELL_PAD_X          6
 #define KDL_CELL_PAD_TOP        4
 #define KDL_CELL_PAD_BOTTOM     4
 #define KDL_CELL_VALUE_BOTTOM   4   /* Digits' baseline, px above the inner bottom */
-#define KDL_CELL_UNIT_W         12
+#define KDL_CELL_UNIT_W         16  /* "bar" in the 10 px text face: 14.6 px */
 #define KDL_CELL_UNIT_GAP       2
-#define KDL_CELL_MIN_VALUE_W    40  /* "3.30" in the 26 px num face */
+#define KDL_CELL_MIN_VALUE_W    42  /* "2.35" in the 26 px num face: 41.3 px */
+
+/* Engine speed tile: fluid tile metrics, wider reading and unit. */
+#define KDL_RPM_VALUE_W         75  /* Five tabular 32 px digits: 73.4 px */
+#define KDL_RPM_UNIT_W          18  /* "rpm" in the 10 px text face: 17.7 px */
 
 typedef struct {
     kdl_level_t level;
@@ -662,9 +669,9 @@ esp_err_t kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
 
     const int32_t inner_w = width - 2 * KDL_TILE_BORDER - 2 * KDL_CELL_PAD_X;
     const int32_t inner_h = height - 2 * KDL_TILE_BORDER - KDL_CELL_PAD_TOP - KDL_CELL_PAD_BOTTOM;
-    const int32_t value_w = inner_w - KDL_CELL_UNIT_W - KDL_CELL_UNIT_GAP;
+    const int32_t name_w = inner_w - KDL_CELL_UNIT_W - KDL_CELL_UNIT_GAP;
     const int32_t baseline = inner_h - KDL_CELL_VALUE_BOTTOM;
-    if (value_w < KDL_CELL_MIN_VALUE_W
+    if (inner_w < KDL_CELL_MIN_VALUE_W || name_w <= 0
         || baseline - kdl_font_ascent(KDL_FONT_NUM_L) < lv_font_get_line_height(KDL_FONT_MICRO))
     {
         return ESP_ERR_INVALID_ARG;
@@ -672,25 +679,25 @@ esp_err_t kdl_analog_cell_create(kdl_analog_cell_t *cell, lv_obj_t *parent,
 
     memset(cell, 0, sizeof(*cell));
     cell->desc = desc;
-    cell->valid = -1;
+    cell->level = KDL_LEVEL_UNSET;
+    cell->applied = false;
 
     cell->root = kdl_widget_tile_root(parent, width, height, KDL_CELL_PAD_X, KDL_CELL_PAD_TOP,
                                       KDL_CELL_PAD_BOTTOM);
 
     lv_obj_t *name = kdl_widget_label(cell->root, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED, 0, 0,
-                                      inner_w, LV_TEXT_ALIGN_LEFT);
+                                      name_w, LV_TEXT_ALIGN_LEFT);
     lv_label_set_text(name, desc->channel->name);
 
+    lv_obj_t *unit = kdl_widget_label(cell->root, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED,
+                                      inner_w - KDL_CELL_UNIT_W, 0, KDL_CELL_UNIT_W,
+                                      LV_TEXT_ALIGN_RIGHT);
+    lv_label_set_text(unit, desc->channel->unit);
+
     cell->value = kdl_widget_label(cell->root, KDL_FONT_NUM_L, KDL_COLOR_INK_FAINT, 0,
-                                   baseline - kdl_font_ascent(KDL_FONT_NUM_L), value_w,
+                                   baseline - kdl_font_ascent(KDL_FONT_NUM_L), inner_w,
                                    LV_TEXT_ALIGN_LEFT);
     lv_label_set_text(cell->value, "---");
-
-    lv_obj_t *unit = kdl_widget_label(cell->root, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED,
-                                      value_w + KDL_CELL_UNIT_GAP,
-                                      baseline - kdl_font_ascent(KDL_FONT_MICRO),
-                                      KDL_CELL_UNIT_W, LV_TEXT_ALIGN_LEFT);
-    lv_label_set_text(unit, desc->channel->unit);
 
     return ESP_OK;
 }
@@ -703,12 +710,19 @@ void kdl_analog_cell_update(kdl_analog_cell_t *cell, const kdl_sensor_sample_t *
     }
 
     char text[KDL_WIDGET_VALUE_TEXT_LEN];
-    const bool valid = (sample->analog_valid_mask & (1U << cell->desc->input_index)) != 0U;
+    const uint8_t bit = (uint8_t)(1U << cell->desc->input_index);
+    kdl_level_t level = KDL_LEVEL_UNSET;
 
-    if (valid)
+    if ((sample->pressure_valid_mask & bit) != 0U)
     {
-        snprintf(text, sizeof(text), "%.*f", (int)cell->desc->decimals,
-                 (double)sample->analog_inputs[cell->desc->input_index]);
+        const float bar = sample->pressures_bar[cell->desc->input_index];
+        snprintf(text, sizeof(text), "%.*f", pressure_scaling_display_decimals(bar), (double)bar);
+        level = KDL_LEVEL_OK;
+    }
+    else if ((sample->pressure_fault_mask & bit) != 0U)
+    {
+        snprintf(text, sizeof(text), "%s", KDL_TXT_VALUE_SENSOR_FAULT);
+        level = KDL_LEVEL_FAULT;
     }
     else
     {
@@ -716,9 +730,124 @@ void kdl_analog_cell_update(kdl_analog_cell_t *cell, const kdl_sensor_sample_t *
     }
 
     kdl_widget_set_text(cell->value, text);
-    if ((int8_t)valid != cell->valid)
+    if (!cell->applied || level != cell->level)
     {
-        cell->valid = (int8_t)valid;
-        lv_obj_set_style_text_color(cell->value, valid ? KDL_COLOR_INK : KDL_COLOR_INK_FAINT, 0);
+        cell->applied = true;
+        cell->level = level;
+        lv_color_t ink = KDL_COLOR_INK_FAINT;
+        if (level == KDL_LEVEL_OK)
+        {
+            ink = KDL_COLOR_INK;
+        }
+        else if (level == KDL_LEVEL_FAULT)
+        {
+            /* Unlike an unplugged thermocouple, a configured sensor out of
+             * range is a wiring problem worth noticing. */
+            ink = KDL_COLOR_HOT;
+        }
+        lv_obj_set_style_text_color(cell->value, ink, 0);
     }
+}
+
+/* -- Engine speed tile ----------------------------------------------------- */
+
+esp_err_t kdl_rpm_tile_create(kdl_rpm_tile_t *tile, lv_obj_t *parent, float full_scale,
+                              int32_t width, int32_t height)
+{
+    if (tile == NULL || parent == NULL || !(full_scale > 0.0f))
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const int32_t inner_w = width - 2 * KDL_TILE_BORDER - 2 * KDL_TILE_PAD_X;
+    const int32_t inner_h = height - 2 * KDL_TILE_BORDER - KDL_TILE_PAD_TOP - KDL_TILE_PAD_BOTTOM;
+    const int32_t value_x = inner_w - KDL_RPM_UNIT_W - KDL_TILE_UNIT_GAP - KDL_RPM_VALUE_W;
+    const int32_t text_w = value_x - KDL_TILE_TEXT_GAP;
+    const int32_t name_h = lv_font_get_line_height(KDL_FONT_KEY);
+    const int32_t track_y = inner_h - KDL_TILE_TRACK_H;
+    if (text_w < KDL_TILE_MIN_TEXT_W
+        || KDL_TILE_VALUE_Y + lv_font_get_line_height(KDL_FONT_NUM_XL) > track_y)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(tile, 0, sizeof(*tile));
+    tile->full_scale = full_scale;
+    tile->track_w = inner_w;
+    tile->fill_w = -1;
+    tile->valid = -1;
+
+    tile->root = kdl_widget_tile_root(parent, width, height, KDL_TILE_PAD_X, KDL_TILE_PAD_TOP,
+                                      KDL_TILE_PAD_BOTTOM);
+
+    lv_obj_t *name = kdl_widget_label(tile->root, KDL_FONT_KEY, KDL_COLOR_INK, 0, 0, text_w,
+                                      LV_TEXT_ALIGN_LEFT);
+    lv_label_set_text(name, data_model_rpm_channel.name);
+
+    tile->peak = kdl_widget_label(tile->root, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED, 0, name_h + 2,
+                                  text_w, LV_TEXT_ALIGN_LEFT);
+    lv_label_set_text(tile->peak, KDL_TXT_RPM_PEAK_NONE);
+
+    tile->value = kdl_widget_label(tile->root, KDL_FONT_NUM_XL, KDL_COLOR_INK_FAINT, value_x,
+                                   KDL_TILE_VALUE_Y, KDL_RPM_VALUE_W, LV_TEXT_ALIGN_RIGHT);
+    lv_label_set_text(tile->value, "---");
+
+    lv_obj_t *unit = kdl_widget_label(tile->root, KDL_FONT_MICRO, KDL_COLOR_INK_MUTED,
+                                      inner_w - KDL_RPM_UNIT_W, KDL_TILE_VALUE_Y,
+                                      KDL_RPM_UNIT_W, LV_TEXT_ALIGN_LEFT);
+    lv_label_set_text(unit, data_model_rpm_channel.unit);
+
+    /* Plain track: no thresholds for the engine speed yet. */
+    lv_obj_t *track = kdl_widget_box(tile->root, 0, track_y, inner_w, KDL_TILE_TRACK_H,
+                                     KDL_COLOR_ZONE_OK);
+    tile->fill = kdl_widget_box(track, 0, 0, 0, KDL_TILE_TRACK_H, KDL_COLOR_INK);
+
+    return ESP_OK;
+}
+
+void kdl_rpm_tile_update(kdl_rpm_tile_t *tile, const kdl_sensor_sample_t *sample,
+                         const kdl_sensor_extremes_t *extremes)
+{
+    if (tile == NULL || tile->root == NULL || sample == NULL)
+    {
+        return;
+    }
+
+    const bool valid = sample->engine_rpm_valid;
+    const int32_t rpm = valid ? (int32_t)lroundf(sample->engine_rpm) : 0;
+
+    char text[KDL_WIDGET_EXTREMES_TEXT_LEN];
+    if (valid)
+    {
+        snprintf(text, sizeof(text), "%d", (int)rpm);
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "---");
+    }
+    kdl_widget_set_text(tile->value, text);
+
+    if ((int8_t)valid != tile->valid)
+    {
+        tile->valid = (int8_t)valid;
+        lv_obj_set_style_text_color(tile->value, valid ? KDL_COLOR_INK : KDL_COLOR_INK_FAINT, 0);
+        lv_obj_set_style_bg_color(tile->root, valid ? KDL_COLOR_CARD : KDL_COLOR_SURFACE, 0);
+    }
+
+    const int32_t fill_w = kdl_scale_px((float)rpm, tile->full_scale, tile->track_w);
+    if (fill_w != tile->fill_w)
+    {
+        tile->fill_w = fill_w;
+        lv_obj_set_width(tile->fill, fill_w);
+    }
+
+    if (valid && extremes != NULL && extremes->rpm_max_valid)
+    {
+        snprintf(text, sizeof(text), KDL_TXT_RPM_PEAK_FMT, (int)lroundf(extremes->rpm_max));
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "%s", KDL_TXT_RPM_PEAK_NONE);
+    }
+    kdl_widget_set_text(tile->peak, text);
 }

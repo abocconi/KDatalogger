@@ -41,3 +41,8 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 # The GUI draws with its own Barlow faces (components/gui/assets/fonts,
 # see kdl_theme.h). Montserrat 14 stays only as LVGL's LV_FONT_DEFAULT.
 CONFIG_LV_FONT_MONTSERRAT_14=y
+
+# Tachometer capture ISR (components/tachometer) keeps running while the
+# logger erases flash: with the cache off it would otherwise be held back,
+# a missed edge would merge two periods and the logged speed would halve.
+CONFIG_MCPWM_ISR_CACHE_SAFE=y

@@ -73,7 +73,8 @@ _Static_assert(LOGGER_QUEUE_LENGTH > LOGGER_QUEUE_CONTROL_SLOTS,
 #define LOGGER_UTF8_BOM "\xEF\xBB\xBF"
 #define LOGGER_EOL "\r\n"
 #define LOGGER_TC_DECIMALS 2
-#define LOGGER_AI_DECIMALS 3
+#define LOGGER_PRESSURE_DECIMALS 2
+#define LOGGER_RPM_DECIMALS 0
 
 static const char *TAG = "logger";
 
@@ -303,6 +304,7 @@ static void logger_write_header(FILE *file)
         const kdl_channel_info_t *channel = &data_model_analog_channels[index];
         fprintf(file, ";%s [%s]", channel->name, channel->unit);
     }
+    fprintf(file, ";%s [%s]", data_model_rpm_channel.name, data_model_rpm_channel.unit);
     fputs(LOGGER_EOL, file);
 }
 
@@ -480,10 +482,15 @@ static esp_err_t logger_write_row(const logger_msg_t *msg)
         const bool valid = (sample->thermocouple_valid_mask & (1U << index)) != 0U;
         logger_write_value(s_log_file, valid, sample->thermocouples_c[index], LOGGER_TC_DECIMALS);
     }
+    /* A disabled input or a sensor fault leaves the cell empty, like an
+     * unplugged thermocouple. */
     for (size_t index = 0; index < DATA_MODEL_ANALOG_INPUT_COUNT; ++index) {
-        const bool valid = (sample->analog_valid_mask & (1U << index)) != 0U;
-        logger_write_value(s_log_file, valid, sample->analog_inputs[index], LOGGER_AI_DECIMALS);
+        const bool valid = (sample->pressure_valid_mask & (1U << index)) != 0U;
+        logger_write_value(s_log_file, valid, sample->pressures_bar[index],
+                           LOGGER_PRESSURE_DECIMALS);
     }
+    logger_write_value(s_log_file, sample->engine_rpm_valid, sample->engine_rpm,
+                       LOGGER_RPM_DECIMALS);
     fputs(LOGGER_EOL, s_log_file);
 
     s_sample_count++;

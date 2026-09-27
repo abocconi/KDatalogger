@@ -20,12 +20,31 @@ size_t board_config_digital_input_count(void);
 int board_config_digital_input_gpio(size_t channel);
 bool board_config_digital_inputs_has_valid_pins(void);
 
+/** Sampled analog inputs, terminals IN3..IN7 in this order. */
 size_t board_config_analog_input_count(void);
 int board_config_analog_input_gpio(size_t channel);
 bool board_config_analog_inputs_has_valid_pins(void);
 
-/** AI1: repurposed as a digital "record enable" input (high = logging ON). */
+/**
+ * @brief Gain of the analog input front end: pin voltage / terminal voltage.
+ *
+ * Divide an ADC reading by this to get the voltage at the sensor terminal.
+ * Same on every INx; changes with the board revision.
+ */
+float board_config_analog_input_divider_ratio(void);
+
+/**
+ * @brief Highest terminal voltage the analog inputs measure, in volts.
+ *
+ * A sensor whose output range exceeds it is refused by the configuration.
+ */
+float board_config_analog_input_max_v(void);
+
+/** IN1: repurposed as a digital "record enable" input (high = logging ON). */
 int board_config_record_enable_gpio(void);
+
+/** IN2: tachometer pulse input, captured by the MCPWM. */
+int board_config_tachometer_gpio(void);
 
 spi_host_device_t board_config_display_host(void);
 int board_config_display_mosi_io(void);

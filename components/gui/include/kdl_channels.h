@@ -17,10 +17,10 @@
  * main page, so keep their three values identical.
  */
 
-/** @brief Analog channels rendered on the main page (IN2..IN6).
+/** @brief Pressure channels rendered on the main page (IN3..IN7).
  *
- * IN1 is the recording-enable contact and is not part of the sampled analog
- * group at all, so every sampled channel is shown. */
+ * IN1 is the recording-enable contact and IN2 the tachometer, neither part
+ * of the sampled analog group, so every sampled channel is shown. */
 #define KDL_ANALOG_DISPLAY_COUNT DATA_MODEL_ANALOG_INPUT_COUNT
 
 /** @brief Thermocouple channels rendered on the main page. */
@@ -33,10 +33,11 @@ typedef struct {
     float alarm_threshold; /**< Red from here up; start of the alarm band     */
 } kdl_thermocouple_desc_t;
 
+/** Decimals follow the value (pressure_scaling_display_decimals()), since the
+ *  range of each input is set in the configuration file, not here. */
 typedef struct {
-    const kdl_channel_info_t *channel; /**< Shared id/name/unit          */
-    uint8_t decimals;    /**< Digits after the decimal point when printed */
-    uint8_t input_index; /**< Index into kdl_sensor_sample_t.analog_inputs */
+    const kdl_channel_info_t *channel; /**< Shared id/name/unit                */
+    uint8_t input_index; /**< Index into kdl_sensor_sample_t.pressures_bar */
 } kdl_analog_desc_t;
 
 /**

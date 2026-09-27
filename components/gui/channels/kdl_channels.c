@@ -19,14 +19,13 @@ static const kdl_thermocouple_desc_t s_thermocouples[KDL_THERMOCOUPLE_DISPLAY_CO
     { .channel = KDL_TC(7), .full_scale = 130.0f, .warn_threshold =  95.0f, .alarm_threshold = 110.0f },
 };
 
-/* Raw volts until the pressure sensor scaling is known, hence 2 decimals. */
 #define KDL_AI(index) .channel = &data_model_analog_channels[(index)], .input_index = (index)
 static const kdl_analog_desc_t s_analogs[KDL_ANALOG_DISPLAY_COUNT] = {
-    { KDL_AI(0), .decimals = 2 },
-    { KDL_AI(1), .decimals = 2 },
-    { KDL_AI(2), .decimals = 2 },
-    { KDL_AI(3), .decimals = 2 },
-    { KDL_AI(4), .decimals = 2 },
+    { KDL_AI(0) },
+    { KDL_AI(1) },
+    { KDL_AI(2) },
+    { KDL_AI(3) },
+    { KDL_AI(4) },
 };
 
 /* U+00B0 DEGREE SIGN encoded as UTF-8; present in the text fonts. */

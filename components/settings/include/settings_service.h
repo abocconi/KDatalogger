@@ -1,8 +1,11 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
+
+#include "data_model.h"
 
 /** Acquisition/logging period bounds, in milliseconds.
  *
@@ -101,3 +104,19 @@ esp_err_t settings_service_set_graph_window_s(uint16_t window_s);
 
 /** @brief Snap to the nearest entry of settings_graph_window_presets_s. */
 uint16_t settings_service_normalize_graph_window_s(uint16_t window_s);
+
+/**
+ * @brief Zero correction of pressure input @p channel, in volts at the terminal.
+ *
+ * Stored in volts rather than bar so it stays meaningful when the sensor
+ * range is changed in the configuration file; it is the sensor's own offset.
+ * 0 when never set or @p channel is out of range. Thread-safe.
+ */
+float settings_service_get_pressure_zero_v(size_t channel);
+
+/**
+ * @brief Persist the zero corrections of every pressure input at once.
+ *
+ * Writing the values already in effect is a no-op and does not touch flash.
+ */
+esp_err_t settings_service_set_pressure_zero_v(const float zero_v[DATA_MODEL_ANALOG_INPUT_COUNT]);

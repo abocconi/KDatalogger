@@ -14,13 +14,16 @@ const kdl_channel_info_t data_model_thermocouple_channels[DATA_MODEL_THERMOCOUPL
     { .id = "Tc8", .name = "Acqua",  .unit = DATA_MODEL_UNIT_CELSIUS },
 };
 
-/* IN1 is the record-enable contact and is not sampled, so the first analog
- * channel is IN2. Pressures stay in volts until the sensor scaling is known;
- * the "P" prefix keeps them apart from the intercooler temperatures. */
+/* IN1 is the record-enable contact and IN2 the tachometer, so the pressure
+ * sensors sit on IN3..IN7. The ids are also the section names of the sensor
+ * configuration file. The "P" prefix keeps the pressures apart from the
+ * intercooler temperatures. */
 const kdl_channel_info_t data_model_analog_channels[DATA_MODEL_ANALOG_INPUT_COUNT] = {
-    { .id = "IN2", .name = "P IC in",  .unit = "V" },
-    { .id = "IN3", .name = "P IC out", .unit = "V" },
-    { .id = "IN4", .name = "P scar",   .unit = "V" },
-    { .id = "IN5", .name = "P benz",   .unit = "V" },
-    { .id = "IN6", .name = "P olio",   .unit = "V" },
+    { .id = "IN3", .name = "P IC in",  .unit = "bar" },
+    { .id = "IN4", .name = "P IC out", .unit = "bar" },
+    { .id = "IN5", .name = "P scar",   .unit = "bar" },
+    { .id = "IN6", .name = "P benz",   .unit = "bar" },
+    { .id = "IN7", .name = "P olio",   .unit = "bar" },
 };
+
+const kdl_channel_info_t data_model_rpm_channel = { .id = "IN2", .name = "Giri", .unit = "rpm" };

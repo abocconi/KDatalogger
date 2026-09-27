@@ -1,7 +1,7 @@
 # KDatalogger
 
 Datalogger industriale su ESP32-S3 (ESP-IDF + FreeRTOS). Acquisisce temperature da 8 termocoppie
-(MAX31855), 5 ingressi digitali e 5 ingressi analogici, registra su flash interna (FAT,
+(MAX31855), 5 pressioni da sensori in tensione e il regime motore, registra su flash interna (FAT,
 wear-levelling) ed espone i log al PC via USB Mass Storage. Ha un display TFT locale con GUI LVGL
 per visualizzare canali, grafici e impostazioni senza bisogno di un host.
 
@@ -24,9 +24,14 @@ per visualizzare canali, grafici e impostazioni senza bisogno di un host.
 
 **Ingressi digitali** (GPIO 15, 16, 17, 18, 3)
 
-**Ingressi analogici** IN2–IN6 (GPIO 9, 7, 6, 5, 4) — IN1 (GPIO13) non fa parte di questo
-gruppo: è riassegnato a ingresso digitale "record enable" (livello alto = logging attivo, vedi
-sotto).
+**Ingressi IN1–IN7** (schema Datalogger V3, `docs/Datalogger-v3.pdf`: partitore 10k/15k,
+rapporto 0,6, clamp BAT54S; fino a 5 V al morsetto):
+
+| Ingresso | GPIO | Uso |
+| --- | --- | --- |
+| IN1 | 13 | "record enable" digitale (livello alto = logging attivo, vedi sotto) |
+| IN2 | 46 | contagiri, cattura MCPWM (GPIO46 non ha ADC; è un pin di strapping) |
+| IN3–IN7 | 9, 7, 6, 5, 4 | pressioni, ADC oneshot con media di 16 conversioni |
 
 **Canali** — nomi e unità sono in `components/data_model/data_model_channels.c`, condivisi da
 display e log (modificarli richiede un nuovo firmware):
@@ -36,12 +41,12 @@ display e log (modificarli richiede un nuovo firmware):
 | Tc1–Tc4 | `Cil 1`–`Cil 4` | temperatura cilindro 1–4 |
 | Tc5 / Tc6 | `IC in` / `IC out` | temperatura ingresso / uscita intercooler |
 | Tc7 / Tc8 | `Olio` / `Acqua` | temperatura olio / acqua |
-| IN2 / IN3 | `P IC in` / `P IC out` | pressione turbo ingresso / uscita intercooler |
-| IN4 | `P scar` | pressione gas di scarico |
-| IN5 / IN6 | `P benz` / `P olio` | pressione benzina / olio |
+| IN2 | `Giri` | regime motore [rpm] |
+| IN3 / IN4 | `P IC in` / `P IC out` | pressione turbo ingresso / uscita intercooler [bar] |
+| IN5 | `P scar` | pressione gas di scarico [bar] |
+| IN6 / IN7 | `P benz` / `P olio` | pressione benzina / olio [bar] |
 
-Le pressioni sono in volt finché non è nota la scala dei sensori. IN7 (contagiri) non è ancora
-gestito.
+La scala dei sensori non è nel firmware: si imposta nel file `sensori.ini`, vedi sotto.
 
 **Display (SPI2_HOST)**
 
@@ -62,14 +67,20 @@ gestito.
 - `app_core` — orchestratore, avvia i servizi da `app_main`
 - `board` — HAL con l'assegnazione pin reale (nessun placeholder)
 - `max31855` — driver SPI3_HOST, 8 canali, CS manuali via GPIO
-- `digital_inputs` / `analog_inputs` — driver GPIO/ADC oneshot con calibrazione
+- `digital_inputs` / `analog_inputs` — driver dei pulsanti (GPIO) e ADC oneshot con calibrazione
+  e media
+- `tachometer` — cattura MCPWM dei periodi tra impulsi del contagiri (ISR in IRAM, attiva anche
+  durante le scritture su flash: `CONFIG_MCPWM_ISR_CACHE_SAFE`)
+- `sensors` — scala delle pressioni (`pressure_scaling`), regime da periodi (`tach_math`) e file
+  di configurazione `sensori.ini` (`sensor_config`); i primi tre moduli sono C puro, testati su PC
 - `acquisition` — task FreeRTOS periodico (periodo configurabile, vedi `settings`) che campiona
   tutti i driver in un `kdl_sensor_sample_t` (`data_model`)
 - `logger` — scrive i campioni in CSV su FAT (`/data/logs`), flush periodico con fflush+fsync
 - `storage` — partizione FAT con wear-levelling, arbitraggio di accesso FIRMWARE/USB_HOST
 - `usb_msc` — espone la partizione `storage` come Mass Storage Device (TinyUSB)
 - `timekeeping` — orologio software impostato dall'operatore, nessuna batteria tampone
-- `settings` — parametri persistenti in NVS (periodo di acquisizione, luminosità display)
+- `settings` — parametri persistenti in NVS (periodo di acquisizione, luminosità display, zero
+  delle pressioni)
 - `display` / `gui` — driver ST7796 + pagine LVGL (main, grafico, impostazioni, data/ora, USB,
   splash), gestione pulsanti con debounce
 
@@ -78,6 +89,32 @@ gestito.
 Il logging non parte automaticamente all'accensione: segue il livello dell'ingresso "record
 enable" (IN1 / GPIO13) — alto = logging ON, basso = OFF. Serve un comando esterno (interruttore o
 segnale) per avviare/fermare la sessione senza passare dalla GUI.
+
+### Configurazione sensori (`sensori.ini`)
+
+I sensori li sceglie l'utente, quindi la loro scala sta in un file di testo alla radice del disco
+USB, `sensori.ini`, da modificare con il Blocco note. Il firmware lo legge all'accensione e a ogni
+uscita dalla modalità USB; se manca ne scrive uno commentato con i valori iniziali (pressioni
+disattivate, contagiri attivo a 1 impulso/giro, fondo scala 6000 rpm).
+
+- Una sezione per ingresso, `[IN3]`…`[IN7]`: `attivo`, `tensione_min`, `tensione_max`,
+  `pressione_min`, `pressione_max` (dalla scheda tecnica del sensore). Decimali con virgola o
+  punto.
+- `[GIRI]`: `attivo`, `impulsi_giro` (anche decimale, es. morsetto W dell'alternatore),
+  `giri_max` (fondo scala della barra e filtro disturbi: impulsi più vicini di metà periodo a
+  `giri_max` sono scartati).
+- Una sezione con un errore (valore non leggibile, sensore con uscita oltre i 5 V misurabili) viene
+  disattivata; il piè di pagina di Impostazioni mostra `sensori.ini: errore riga N`.
+
+Diagnostica pressioni: con sensori a zero vivo (0,5–4,5 V, 1–5 V) un filo interrotto o un corto
+dà `ERR` sul display e cella vuota nel log. Con sensori 0–5 V non è rilevabile (si legge 0 bar).
+**Impostazioni → Zero pressioni** prende la lettura attuale come 0 bar (sensori all'aria, motore
+spento); un ingresso che legge più del 5 % del fondo scala non viene azzerato, così uno zero dato
+sotto pressione o su un sensore assoluto non si salva. Lo zero è in NVS, in volt.
+
+Contagiri: il regime viene dalla media dei periodi misurati nel ciclo, non dal conteggio degli
+impulsi (a 1 impulso/giro e 1000 rpm, contare su 500 ms darebbe ±12 %). Senza impulsi il valore
+scende in base al tempo dall'ultimo impulso e va a 0 sotto 100 rpm.
 
 ### Formato dei file di log
 
@@ -92,14 +129,15 @@ correttamente. Nota macOS: i file cancellati dal Finder finiscono in `.Trashes` 
 datalogger e occupano spazio finché non si svuota il Cestino con il disco collegato.
 
 ```
-Data;Ora;Tempo [s];Cil 1 [°C];…;Acqua [°C];P IC in [V];…;P olio [V]
-23/09/2026;14:32:05;0,00;85,25;…;;1,234;…
+Data;Ora;Tempo [s];Cil 1 [°C];…;Acqua [°C];P IC in [bar];…;P olio [bar];Giri [rpm]
+23/09/2026;14:32:05;0,00;85,25;…;;1,23;…;;2150
 ```
 
 - `Data`/`Ora` sono vuote se l'orologio non è stato impostato dopo l'accensione.
 - `Tempo [s]` parte da 0 al primo campione della sessione: è l'asse X per i grafici.
-- Un canale non valido (termocoppia aperta/in corto, errore ADC) è una cella vuota.
-- IN1 non compare: è l'ingresso record-enable. Gli analogici sono in volt, senza scala.
+- Un canale non valido (termocoppia aperta/in corto, pressione disattivata o in guasto, contagiri
+  disattivato) è una cella vuota.
+- IN1 non compare: è l'ingresso record-enable.
 
 ### USB MSC: accesso esclusivo
 
@@ -150,6 +188,16 @@ custom (`partitions.csv`) e PSRAM Quad — entrambi già impostati in `sdkconfig
 ```bash
 idf.py set-target esp32s3
 idf.py build
+```
+
+### Test su PC
+
+I moduli di `components/sensors` senza dipendenze ESP-IDF (scala pressioni, regime, parser di
+`sensori.ini`) hanno test Unity che girano sul PC. Unity viene preso dall'albero ESP-IDF, quindi
+serve `IDF_PATH` (è impostato con l'ambiente ESP-IDF attivo):
+
+```bash
+cmake -S test/host -B build-host && cmake --build build-host && ctest --test-dir build-host
 ```
 
 ## Programmazione (Flashing)

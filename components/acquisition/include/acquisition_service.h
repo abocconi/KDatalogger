@@ -35,6 +35,8 @@ typedef struct {
     float thermocouple_min_c[DATA_MODEL_THERMOCOUPLE_COUNT];
     float thermocouple_max_c[DATA_MODEL_THERMOCOUPLE_COUNT];
     uint16_t valid_mask; /**< Channels that have contributed at least one sample */
+    float rpm_max;       /**< Highest engine speed; meaningful only if rpm_max_valid */
+    bool rpm_max_valid;
 } kdl_sensor_extremes_t;
 
 /**
@@ -51,3 +53,22 @@ esp_err_t acquisition_service_get_extremes(kdl_sensor_extremes_t *out);
  * the UI.
  */
 esp_err_t acquisition_service_reset_extremes(void);
+
+/** @brief Outcome of acquisition_service_zero_pressures(). */
+typedef struct {
+    uint8_t enabled_mask; /**< Pressure inputs with a sensor configured */
+    uint8_t zeroed_mask;  /**< Inputs whose zero was taken now          */
+} acquisition_zero_result_t;
+
+/**
+ * @brief Take the current reading of every configured pressure input as 0 bar.
+ *
+ * Meant for sensors vented to the atmosphere, engine off. An input is left
+ * untouched when its reading is a fault or too far from 0 bar to be a
+ * sensor offset (see pressure_scaling_compute_zero()), so a zero pressed
+ * with pressure in the line cannot be stored. The new offsets are persisted.
+ *
+ * @return ESP_ERR_INVALID_STATE if no sample is available (acquisition
+ *         stopped), otherwise the result of persisting the offsets.
+ */
+esp_err_t acquisition_service_zero_pressures(acquisition_zero_result_t *out);

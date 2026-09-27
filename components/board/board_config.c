@@ -90,8 +90,9 @@ size_t board_config_analog_input_count(void)
 
 int board_config_analog_input_gpio(size_t channel)
 {
-    /* AI1 (GPIO13) is no longer part of this group: it is now the digital
-     * record-enable input, see board_config_record_enable_gpio(). */
+    /* IN3..IN7 (schematic Datalogger V3, docs/Datalogger-v3.pdf). IN1 (GPIO13) is the digital
+     * record-enable input and IN2 (GPIO46, not ADC-capable) the tachometer,
+     * see board_config_record_enable_gpio() and board_config_tachometer_gpio(). */
     static const int analog_input_pins[BOARD_ANALOG_INPUT_COUNT] = {
         9,
         7,
@@ -118,9 +119,31 @@ bool board_config_analog_inputs_has_valid_pins(void)
     return true;
 }
 
+float board_config_analog_input_divider_ratio(void)
+{
+    /* 10k in series, 15k to ground on every INx (schematic Datalogger V3). */
+    return 15.0f / (10.0f + 15.0f);
+}
+
+float board_config_analog_input_max_v(void)
+{
+    /* 5.0 V at the terminal is 3.0 V at the pin, still inside the range the
+     * ESP32-S3 ADC measures at 12 dB attenuation (~3.1 V). */
+    return 5.0f;
+}
+
 int board_config_record_enable_gpio(void)
 {
     return 13;
+}
+
+int board_config_tachometer_gpio(void)
+{
+    /* Strapping pin, held low at reset by the 15k of the input divider. A
+     * sensor driving it high during a USB download-mode reset makes the ROM
+     * refuse download mode (GPIO0 low + GPIO46 high is invalid); normal boot
+     * is unaffected. Moved off in the next board revision. */
+    return 46;
 }
 
 spi_host_device_t board_config_display_host(void)

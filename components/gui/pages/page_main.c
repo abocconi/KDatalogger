@@ -10,6 +10,7 @@
 #include "kdl_text.h"
 #include "kdl_theme.h"
 #include "kdl_widgets.h"
+#include "sensor_config.h"
 
 /*
  * Main page geometry, derived from the content box the page manager hands
@@ -17,13 +18,16 @@
  * known pixel and a value change can never reflow the page.
  *
  *   inner box    = 394 x 294 minus PAD on each side = 382 x 282
- *   top band     = cylinder bank (186) + GAP (6) + tile column (190) = 382
+ *   top band     = left column (186) + GAP (6) + tile column (190) = 382
+ *   left column  = engine speed tile (52) + GAP (6) + cylinder bank (163) = 221
  *   tile column  = 4 tiles of 52 with three 4 px gaps = 220 of 221
  *   height       = top band (221) + ROW_GAP (5) + analog row (56) = 282
  *   analog row   = 5 cells of 73 with four 4 px gaps = 381
  *
- * Thermocouples 1-4 (cylinder exhaust) go to the bank, which puts them on
- * one scale side by side; 5-8 (intercooler, oil, coolant) get a tile each.
+ * Engine speed tops the left column, the first place the eye lands. Below
+ * it, thermocouples 1-4 (cylinder exhaust) go to the bank, which puts them
+ * on one scale side by side; 5-8 (intercooler, oil, coolant) get a tile
+ * each. The pressures fill the bottom row.
  */
 #define PAGE_MAIN_PAD            6
 #define PAGE_MAIN_GAP            6
@@ -32,6 +36,9 @@
 #define PAGE_MAIN_INNER_H        282
 #define PAGE_MAIN_TOP_H          221
 #define PAGE_MAIN_BANK_W         186
+#define PAGE_MAIN_RPM_H          52
+#define PAGE_MAIN_BANK_Y         (PAGE_MAIN_RPM_H + PAGE_MAIN_GAP)
+#define PAGE_MAIN_BANK_H         (PAGE_MAIN_TOP_H - PAGE_MAIN_BANK_Y)
 #define PAGE_MAIN_TILE_W         190
 #define PAGE_MAIN_TILE_H         52
 #define PAGE_MAIN_TILE_GAP       4
@@ -42,6 +49,8 @@
 
 _Static_assert(PAGE_MAIN_BANK_W + PAGE_MAIN_GAP + PAGE_MAIN_TILE_W == PAGE_MAIN_INNER_W,
                "top band does not fill the content width exactly");
+_Static_assert(PAGE_MAIN_RPM_H == PAGE_MAIN_TILE_H,
+               "engine speed tile uses the fluid tile metrics");
 _Static_assert(PAGE_MAIN_TILE_COUNT * PAGE_MAIN_TILE_H
                    + (PAGE_MAIN_TILE_COUNT - 1U) * PAGE_MAIN_TILE_GAP <= PAGE_MAIN_TOP_H,
                "tile column overflows the top band");
@@ -56,6 +65,7 @@ _Static_assert(5 * PAGE_MAIN_CELL_W + 4 * PAGE_MAIN_CELL_GAP <= PAGE_MAIN_INNER_
 
 static const char *TAG = "page_main";
 
+static kdl_rpm_tile_t s_rpm;
 static kdl_cyl_bank_t s_bank;
 static kdl_fluid_tile_t s_tiles[PAGE_MAIN_TILE_COUNT];
 static kdl_analog_cell_t s_cells[KDL_ANALOG_DISPLAY_COUNT];
@@ -82,6 +92,7 @@ static void on_tick(void)
     const bool have_extremes = acquisition_service_get_extremes(&extremes) == ESP_OK;
 
     const kdl_sensor_extremes_t *extremes_or_null = have_extremes ? &extremes : NULL;
+    kdl_rpm_tile_update(&s_rpm, &sample, extremes_or_null);
     kdl_cyl_bank_update(&s_bank, &sample, extremes_or_null);
     for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
     {
@@ -101,10 +112,25 @@ static void on_show(lv_obj_t *content)
 
     /* A widget that fails to build keeps a NULL root, which its _update
      * treats as absent: the rest of the page still works. */
-    esp_err_t err = kdl_cyl_bank_create(&s_bank, content, 0, PAGE_MAIN_BANK_W, PAGE_MAIN_TOP_H);
+    /* The configuration only changes on the way back from USB mode, which
+     * rebuilds this page: the full scale can be read once here. */
+    sensor_config_t config;
+    sensor_config_get(&config);
+    esp_err_t err = kdl_rpm_tile_create(&s_rpm, content, (float)config.tach.rpm_max,
+                                        PAGE_MAIN_BANK_W, PAGE_MAIN_RPM_H);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "engine speed tile: %s", esp_err_to_name(err));
+    }
+
+    err = kdl_cyl_bank_create(&s_bank, content, 0, PAGE_MAIN_BANK_W, PAGE_MAIN_BANK_H);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "cylinder bank: %s", esp_err_to_name(err));
+    }
+    else
+    {
+        lv_obj_set_pos(s_bank.root, 0, PAGE_MAIN_BANK_Y);
     }
 
     for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
@@ -146,6 +172,7 @@ static void on_hide(void)
 {
     /* The page manager destroys the content subtree; drop the dangling
      * handles so a late update cannot touch freed objects. */
+    s_rpm.root = NULL;
     s_bank.root = NULL;
     for (uint8_t index = 0; index < PAGE_MAIN_TILE_COUNT; ++index)
     {

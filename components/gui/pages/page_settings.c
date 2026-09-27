@@ -4,10 +4,12 @@
 #include <stdio.h>
 
 #include "display_driver.h"
+#include "acquisition_service.h"
 #include "esp_app_desc.h"
 #include "kdl_theme.h"
 #include "kdl_text.h"
 #include "kdl_widgets.h"
+#include "sensor_config.h"
 #include "settings_service.h"
 #include "timekeeping.h"
 
@@ -24,6 +26,7 @@
 #define PAGE_SETTINGS_VALUE_W   110
 #define PAGE_SETTINGS_HINT_W    26
 #define PAGE_SETTINGS_FOOTER_LEN 48
+#define PAGE_SETTINGS_RESULT_LEN 24
 
 /** Selectable acquisition periods, in ms. A preset list rather than a free
  *  counter: stepping one millisecond at a time through a 100-5000 range with
@@ -37,6 +40,7 @@ typedef enum {
     PAGE_SETTINGS_ROW_GRAPH_WINDOW,
     PAGE_SETTINGS_ROW_DATETIME,
     PAGE_SETTINGS_ROW_BRIGHTNESS,
+    PAGE_SETTINGS_ROW_PRESSURE_ZERO,
     PAGE_SETTINGS_ROW_COUNT,
 } page_settings_row_t;
 
@@ -48,12 +52,15 @@ static lv_obj_t *s_hints[PAGE_SETTINGS_ROW_COUNT];
 
 static uint8_t s_cursor;
 static bool s_editing;
+/** Outcome of the last zero on this visit to the page; empty until then. */
+static char s_zero_result[PAGE_SETTINGS_RESULT_LEN];
 
 static const char *const s_row_names[PAGE_SETTINGS_ROW_COUNT] = {
     KDL_TXT_SETTINGS_PERIOD,
     KDL_TXT_SETTINGS_GRAPH_WINDOW,
     KDL_TXT_SETTINGS_DATETIME,
     KDL_TXT_SETTINGS_BRIGHTNESS,
+    KDL_TXT_SETTINGS_ZERO,
 };
 
 /** Rows opening a sub-page show a single chevron; rows adjusted in place show
@@ -63,6 +70,7 @@ static const char *const s_row_hints[PAGE_SETTINGS_ROW_COUNT] = {
     LV_SYMBOL_LEFT LV_SYMBOL_RIGHT,
     LV_SYMBOL_RIGHT,
     LV_SYMBOL_LEFT LV_SYMBOL_RIGHT,
+    "",
 };
 
 static uint8_t page_settings_nearest_preset(void)
@@ -138,6 +146,10 @@ static void page_settings_format_value(page_settings_row_t row, char *out, size_
         snprintf(out, len, "%u %%", (unsigned)settings_service_get_brightness_percent());
         break;
 
+    case PAGE_SETTINGS_ROW_PRESSURE_ZERO:
+        snprintf(out, len, "%s", s_zero_result);
+        break;
+
     default:
         out[0] = '\0';
         break;
@@ -189,8 +201,71 @@ static void page_settings_apply_keys(void)
     {
         page_manager_set_button_label(0, NULL);
         page_manager_set_button_label(1, NULL);
-        page_manager_set_button_label(2, NULL);
+        /* The zero row is an action, not a value to edit. */
+        page_manager_set_button_label(2, ((page_settings_row_t)s_cursor
+                                          == PAGE_SETTINGS_ROW_PRESSURE_ZERO)
+                                             ? KDL_TXT_KEY_ZERO : NULL);
         page_manager_set_button_label(3, NULL);
+    }
+}
+
+static unsigned page_settings_count_bits(uint8_t mask)
+{
+    unsigned count = 0;
+    for (; mask != 0U; mask &= (uint8_t)(mask - 1U))
+    {
+        ++count;
+    }
+    return count;
+}
+
+static void page_settings_zero_pressures(void)
+{
+    acquisition_zero_result_t result;
+    const esp_err_t err = acquisition_service_zero_pressures(&result);
+    if (err != ESP_OK)
+    {
+        snprintf(s_zero_result, sizeof(s_zero_result), KDL_TXT_SETTINGS_ZERO_FAIL);
+    }
+    else if (result.enabled_mask == 0U)
+    {
+        snprintf(s_zero_result, sizeof(s_zero_result), KDL_TXT_SETTINGS_ZERO_NONE);
+    }
+    else
+    {
+        snprintf(s_zero_result, sizeof(s_zero_result), KDL_TXT_SETTINGS_ZERO_FMT,
+                 page_settings_count_bits(result.zeroed_mask),
+                 page_settings_count_bits(result.enabled_mask));
+    }
+    page_settings_refresh();
+}
+
+/** Outcome of the last configuration file read, for the footer. */
+static void page_settings_format_config_status(char *out, size_t len, bool *is_error)
+{
+    sensor_config_status_t status;
+    sensor_config_get_status(&status);
+    *is_error = false;
+
+    if (status.error_count != 0U)
+    {
+        snprintf(out, len, KDL_TXT_CONFIG_ERROR_FMT, (unsigned)status.first_error_line);
+        *is_error = true;
+        return;
+    }
+    switch (status.source)
+    {
+    case SENSOR_CONFIG_SOURCE_FILE:
+        snprintf(out, len, KDL_TXT_CONFIG_OK);
+        break;
+    case SENSOR_CONFIG_SOURCE_CREATED:
+        snprintf(out, len, KDL_TXT_CONFIG_CREATED);
+        break;
+    case SENSOR_CONFIG_SOURCE_DEFAULTS:
+    default:
+        snprintf(out, len, KDL_TXT_CONFIG_UNREAD);
+        *is_error = true;
+        break;
     }
 }
 
@@ -216,6 +291,7 @@ static void on_show(lv_obj_t *content)
     lv_obj_set_style_pad_row(content, PAGE_SETTINGS_ROW_GAP, 0);
 
     s_editing = false;
+    s_zero_result[0] = '\0';
 
     for (uint8_t index = 0; index < PAGE_SETTINGS_ROW_COUNT; ++index)
     {
@@ -253,11 +329,27 @@ static void on_show(lv_obj_t *content)
     lv_obj_set_size(spacer, 1, 1);
     lv_obj_set_flex_grow(spacer, 1);
 
+    /* Footer: configuration file outcome on the left, firmware on the right.
+     * The file is only read at boot and on the way back from USB mode, both
+     * of which rebuild this page, so it is formatted once here. */
+    lv_obj_t *footer_row = lv_obj_create(content);
+    lv_obj_add_style(footer_row, &kdl_style_panel, 0);
+    lv_obj_set_size(footer_row, PAGE_SETTINGS_INNER_W, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(footer_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(footer_row, LV_FLEX_FLOW_ROW);
+
     char footer[PAGE_SETTINGS_FOOTER_LEN];
+    bool config_error = false;
+    page_settings_format_config_status(footer, sizeof(footer), &config_error);
+    lv_obj_t *config = page_settings_label(footer_row, KDL_FONT_KEY, 0, LV_TEXT_ALIGN_LEFT);
+    lv_obj_set_flex_grow(config, 1);
+    lv_obj_set_style_text_color(config, config_error ? KDL_COLOR_HOT : KDL_COLOR_INK_MUTED, 0);
+    lv_label_set_text(config, footer);
+
     snprintf(footer, sizeof(footer), KDL_TXT_SETTINGS_FIRMWARE_FMT,
              esp_app_get_description()->version);
-    lv_obj_t *version = page_settings_label(content, KDL_FONT_KEY, PAGE_SETTINGS_INNER_W,
-                                            LV_TEXT_ALIGN_RIGHT);
+    lv_obj_t *version = page_settings_label(footer_row, KDL_FONT_KEY, 0, LV_TEXT_ALIGN_RIGHT);
+    lv_obj_set_width(version, LV_SIZE_CONTENT);
     lv_obj_set_style_text_color(version, KDL_COLOR_INK_MUTED, 0);
     lv_label_set_text(version, footer);
 
@@ -361,11 +453,13 @@ static void on_button(uint8_t button_index)
     {
     case 0:
         s_cursor = (uint8_t)((s_cursor + PAGE_SETTINGS_ROW_COUNT - 1U) % PAGE_SETTINGS_ROW_COUNT);
+        page_settings_apply_keys();
         page_settings_refresh();
         break;
 
     case 1:
         s_cursor = (uint8_t)((s_cursor + 1U) % PAGE_SETTINGS_ROW_COUNT);
+        page_settings_apply_keys();
         page_settings_refresh();
         break;
 
@@ -374,6 +468,10 @@ static void on_button(uint8_t button_index)
         {
             page_datetime_configure(&page_settings, false);
             page_manager_switch_to(&page_datetime);
+        }
+        else if ((page_settings_row_t)s_cursor == PAGE_SETTINGS_ROW_PRESSURE_ZERO)
+        {
+            page_settings_zero_pressures();
         }
         else
         {

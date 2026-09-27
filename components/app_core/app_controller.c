@@ -21,6 +21,7 @@
 #include "gui_service.h"
 #include "log_viewer.h"
 #include "logger_service.h"
+#include "sensor_config.h"
 #include "settings_service.h"
 #include "storage_manager.h"
 #include "trend_service.h"
@@ -92,6 +93,13 @@ esp_err_t app_controller_init(void)
     ESP_RETURN_ON_ERROR(settings_service_init(), TAG, "settings init failed");
     ESP_RETURN_ON_ERROR(timekeeping_init(), TAG, "timekeeping init failed");
     ESP_RETURN_ON_ERROR(storage_manager_init(), TAG, "storage init failed");
+    ESP_RETURN_ON_ERROR(sensor_config_init(), TAG, "sensor config init failed");
+    /* Not fatal: an unreadable file leaves the defaults in effect, and the
+     * settings page reports it. */
+    const esp_err_t config_err = sensor_config_load();
+    if (config_err != ESP_OK) {
+        ESP_LOGW(TAG, "sensor configuration not loaded: %s", esp_err_to_name(config_err));
+    }
     ESP_RETURN_ON_ERROR(usb_msc_service_init(), TAG, "usb msc init failed");
     ESP_RETURN_ON_ERROR(logger_service_init(), TAG, "logger init failed");
     ESP_RETURN_ON_ERROR(trend_service_init(), TAG, "trend init failed");
@@ -177,6 +185,12 @@ static esp_err_t app_controller_exit_usb_msc_mode_locked(void)
 
     ESP_RETURN_ON_ERROR(usb_msc_service_stop(), TAG, "usb stop failed");
     ESP_RETURN_ON_ERROR(storage_manager_resume_firmware_access(), TAG, "storage resume failed");
+    /* The operator may have edited the configuration from the PC. Read
+     * before acquisition restarts, so its first sample already uses it. */
+    const esp_err_t config_err = sensor_config_load();
+    if (config_err != ESP_OK) {
+        ESP_LOGW(TAG, "sensor configuration not reloaded: %s", esp_err_to_name(config_err));
+    }
     /* Recording resumes on its own, once acquisition_service samples AI1
      * again -- no explicit logger_service_start() here. */
 #if KDL_ACQUISITION_ENABLED

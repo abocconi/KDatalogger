@@ -12,8 +12,9 @@
     var MINUTES_FROM_S = 120;      /* time axis switches to m:ss past this span */
     /* Tick steps in seconds for an m:ss axis: whole clock units, never 50 s. */
     var MINUTE_INCRS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
-    var UNIT_TITLES = { '°C': 'Temperature', 'V': 'Tensioni', 'bar': 'Pressioni', 'mV': 'Tensioni' };
-    var UNIT_DECIMALS = { '°C': 1, 'V': 3, 'mV': 0, 'bar': 2 };
+    var UNIT_TITLES = { '°C': 'Temperature', 'V': 'Tensioni', 'bar': 'Pressioni', 'mV': 'Tensioni',
+                        'rpm': 'Giri motore' };
+    var UNIT_DECIMALS = { '°C': 1, 'V': 3, 'mV': 0, 'bar': 2, 'rpm': 0 };
 
     var state = {
         files: [],             /* { id, key, name, data } in load order */
