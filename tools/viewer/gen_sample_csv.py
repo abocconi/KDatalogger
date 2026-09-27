@@ -5,7 +5,9 @@ The files mimic what logger_service.c writes, byte for byte: UTF-8 BOM, ';'
 separator, ',' decimal mark, CRLF, "Data;Ora;Tempo [s]" then one column per
 channel headed "<name> [<unit>]" (names from data_model_channels.c), empty
 cells for invalid readings. Values are invented but shaped like a tractor
-pull: exhaust temperatures and boost ramp up during the run and decay after.
+pull with a diesel engine: idle in the pits, a rev-up at the start, engine
+speed sagging as the sled digs in; exhaust temperatures and boost ramp up
+during the run and decay after. Pressures are in bar, engine speed in rpm.
 
 Deterministic (fixed seed): re-running produces identical files.
 
@@ -20,6 +22,7 @@ from pathlib import Path
 
 TC_CHANNELS = ["Cil 1", "Cil 2", "Cil 3", "Cil 4", "IC in", "IC out", "Olio", "Acqua"]
 AI_CHANNELS = ["P IC in", "P IC out", "P scar", "P benz", "P olio"]
+RPM_CHANNEL = "Giri"
 
 
 def smoothstep(t0, t1, t):
@@ -57,12 +60,25 @@ def fmt(value, decimals):
     return f"{value:.{decimals}f}".replace(".", ",")
 
 
+def engine_rpm(t, start, length, heat, idle=900.0, peak=3000.0):
+    """Idle, a quick rev-up just before the pull, a sag under load, back to idle."""
+    rev = smoothstep(start - 1.5, start, t) * (1.0 - smoothstep(start + length, start + length + 2.0, t))
+    progress = min(max((t - start) / length, 0.0), 1.0) if length > 0 else 0.0
+    sag = 450.0 * heat * progress * progress * rev
+    return idle + (peak - idle) * rev - sag
+
+
 def write_log(path, *, start_clock, duration_s, period_s, pull_start, pull_len, heat,
               missing=(), dropouts=(), jitter=True, seed=1):
+    """missing: channels with no probe / sensor configured (whole column empty).
+    dropouts: (channel, t_from, t_to) windows read as invalid -- an open
+    thermocouple, a pressure sensor out of range (ERR on the display), a
+    loose tachometer wire."""
     rng = random.Random(seed)
     header = ["Data", "Ora", "Tempo [s]"]
     header += [f"{name} [°C]" for name in TC_CHANNELS]
-    header += [f"{name} [V]" for name in AI_CHANNELS]
+    header += [f"{name} [bar]" for name in AI_CHANNELS]
+    header += [f"{RPM_CHANNEL} [rpm]"]
 
     rows = []
     t = 0.0
@@ -80,13 +96,17 @@ def write_log(path, *, start_clock, duration_s, period_s, pull_start, pull_len, 
         tc.append(86.0 + 0.08 * t + 5.0 * air + rng.gauss(0, 0.2))  # Olio
         tc.append(82.0 + 0.05 * t + 3.0 * air + rng.gauss(0, 0.2))  # Acqua
 
+        # Relative pressures, bar. Clamped at 0 like the firmware (a reading
+        # below the sensor's live zero shows p_min).
         ai = [
-            0.52 + 3.30 * heat * load + rng.gauss(0, 0.012),        # P IC in (boost)
-            0.51 + 3.05 * heat * load + rng.gauss(0, 0.012),        # P IC out
-            0.60 + 2.60 * heat * load + rng.gauss(0, 0.015),        # P scar
-            2.48 - 0.35 * load + rng.gauss(0, 0.010),               # P benz
-            1.45 + 1.55 * load + rng.gauss(0, 0.010),               # P olio
+            0.05 + 4.20 * heat * load + rng.gauss(0, 0.015),        # P IC in (boost)
+            0.04 + 3.90 * heat * load + rng.gauss(0, 0.015),        # P IC out
+            0.10 + 3.20 * heat * load + rng.gauss(0, 0.020),        # P scar
+            5.20 - 0.80 * load + rng.gauss(0, 0.020),               # P benz
+            1.60 + 3.40 * load + rng.gauss(0, 0.015),               # P olio
         ]
+        ai = [max(value, 0.0) for value in ai]
+        rpm = engine_rpm(t, pull_start, pull_len, heat) + rng.gauss(0, 12.0)
 
         cells = []
         if start_clock is None:
@@ -104,7 +124,11 @@ def write_log(path, *, start_clock, duration_s, period_s, pull_start, pull_len, 
             dropped = any(ch == name and a <= t < b for ch, a, b in dropouts)
             cells.append("" if name in missing or dropped else fmt(quantize_tc(value), 2))
         for index, value in enumerate(ai):
-            cells.append("" if AI_CHANNELS[index] in missing else fmt(value, 3))
+            name = AI_CHANNELS[index]
+            dropped = any(ch == name and a <= t < b for ch, a, b in dropouts)
+            cells.append("" if name in missing or dropped else fmt(value, 2))
+        rpm_dropped = any(ch == RPM_CHANNEL and a <= t < b for ch, a, b in dropouts)
+        cells.append("" if RPM_CHANNEL in missing or rpm_dropped else f"{round(rpm):d}")
         rows.append(";".join(cells))
 
         step = period_s
@@ -123,17 +147,21 @@ def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "samples"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Two pulls on the same afternoon, 100 ms period. Water probe unplugged in
-    # the first, a loose oil probe in the second (short gap).
+    # Two pulls on the same afternoon, 100 ms period. First: water probe
+    # unplugged, exhaust pressure sensor not configured in sensori.ini.
+    # Second: a loose oil probe (short gap) and the boost sensor out of range
+    # for a moment (ERR on the display, empty cells).
     write_log(out_dir / "log_0101.csv", start_clock=("26/09/2026", 14 * 3600 + 32 * 60 + 5),
               duration_s=60.0, period_s=0.1, pull_start=15.0, pull_len=12.0, heat=0.92,
-              missing=("Acqua",), seed=101)
+              missing=("Acqua", "P scar"), seed=101)
     write_log(out_dir / "log_0102.csv", start_clock=("26/09/2026", 15 * 3600 + 4 * 60 + 41),
               duration_s=55.0, period_s=0.1, pull_start=10.0, pull_len=14.0, heat=1.0,
-              dropouts=(("Olio", 31.0, 33.5),), seed=102)
-    # A 10-minute warm-up in the pits at 1 s, clock never set (empty Data/Ora).
+              dropouts=(("Olio", 31.0, 33.5), ("P IC in", 18.0, 19.2)), seed=102)
+    # A 10-minute warm-up in the pits at 1 s, clock never set (empty Data/Ora),
+    # tachometer wire loose for a few seconds.
     write_log(out_dir / "log_0100.csv", start_clock=None, duration_s=600.0, period_s=1.0,
-              pull_start=420.0, pull_len=20.0, heat=0.55, jitter=False, seed=100)
+              pull_start=420.0, pull_len=20.0, heat=0.55, jitter=False,
+              dropouts=(("Giri", 200.0, 206.0),), seed=100)
 
 
 if __name__ == "__main__":

@@ -102,7 +102,9 @@ test('generated sample files parse', () => {
     assert.ok(files.length > 0, 'no samples: run tools/viewer/gen_sample_csv.py');
     files.forEach((f) => {
         const d = KdlCsv.parse(fs.readFileSync(path.join(dir, f), 'utf8'), f);
-        assert.strictEqual(d.columns.length, 13, f + ': expected 8 TC + 5 AI columns');
+        assert.strictEqual(d.columns.length, 14, f + ': expected 8 TC + 5 pressure + rpm columns');
+        assert.deepStrictEqual(d.columns.slice(8).map((c) => c.unit),
+                               ['bar', 'bar', 'bar', 'bar', 'bar', 'rpm'], f + ': units');
         assert.ok(d.rowCount > 100, f + ': too few rows');
     });
 });
