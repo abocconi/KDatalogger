@@ -14,7 +14,8 @@
  *
  * Splitting at logical 4 KB boundaries keeps every piece inside one page, which
  * WL maps correctly. wl_erase_range() is not affected and is not wrapped.
- * Remove this file and the link options once IDF fixes WL_Flash.
+ * Remove this file and the link options once IDF fixes WL_Flash:
+ * https://github.com/espressif/esp-idf/issues/19145
  */
 
 #include <stddef.h>
