@@ -190,6 +190,17 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
+### VS Code
+
+`.vscode/settings.json` non è versionato: l'estensione ESP-IDF ci scrive valori legati alla
+macchina (porta seriale, percorso di ESP-IDF) e li riscrive a ogni selezione della porta.
+Sono versionati `c_cpp_properties.json` e `launch.json`. Su un clone nuovo basta impostare dal
+menu dell'estensione il target `esp32s3`, la porta e la configurazione OpenOCD
+(`interface/ftdi/esp_ftdi.cfg`, `target/esp32s3.cfg`).
+
+Per programmare conviene l'adattatore USB-seriale sulla UART0 invece della USB nativa: la USB
+nativa passa a TinyUSB quando il disco è ceduto al PC, e con lei sparirebbe anche la console.
+
 ### Test su PC
 
 I moduli di `components/sensors` senza dipendenze ESP-IDF (scala pressioni, regime, parser di
