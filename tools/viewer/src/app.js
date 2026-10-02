@@ -1,7 +1,8 @@
 /*
  * KDatalogger log viewer: loads the CSV files chosen or dropped by the user,
  * draws one chart per unit (one y axis per chart, cursors and zoom linked),
- * or compares one channel across files aligned on t = 0.
+ * or compares one channel across files aligned on t = 0, each file movable
+ * along the time axis (Shift + drag on its trace, or the legend controls).
  */
 (function () {
     'use strict';
@@ -15,6 +16,7 @@
     var UNIT_TITLES = { '°C': 'Temperature', 'V': 'Tensioni', 'bar': 'Pressioni', 'mV': 'Tensioni',
                         'rpm': 'Giri motore' };
     var UNIT_DECIMALS = { '°C': 1, 'V': 3, 'mV': 0, 'bar': 2, 'rpm': 0 };
+    var GRAB_PX = 16;              /* Shift + drag grabs a trace this close to the pointer */
 
     var state = {
         files: [],             /* { id, key, name, data } in load order */
@@ -24,12 +26,16 @@
         channel: null,         /* channel label compared in compare mode */
         hiddenChannels: {},    /* label -> true, single mode */
         hiddenFiles: {},       /* file id -> true, compare mode */
+        offsets: {},           /* file id -> seconds added to its time, compare mode */
     };
 
     /** Live charts: { u, panel, rows, series, decimals, minutes }. */
     var plots = [];
     var plotByU = typeof Map !== 'undefined' ? new Map() : null;
     var syncingScale = false;
+    /** Compare chart, kept to move traces without a rebuild: { entry, chosen, fields }. */
+    var compare = null;
+    var compareFrame = 0;
 
     var $ = function (id) { return document.getElementById(id); };
 
@@ -86,6 +92,11 @@
     function formatDuration(seconds) {
         return seconds >= MINUTES_FROM_S ? formatTime(seconds, true, 0) + ' min'
                                          : formatNumber(seconds, 1) + ' s';
+    }
+
+    /** Signed offset for the legend and the PNG: "+1,5", "-0,25", "0,0". */
+    function formatOffset(seconds, decimals) {
+        return (seconds > 0 ? '+' : seconds < 0 ? '-' : '') + formatNumber(Math.abs(seconds), decimals);
     }
 
     function fileMeta(data) {
@@ -216,6 +227,7 @@
     function removeFile(id) {
         state.files = state.files.filter(function (f) { return f.id !== id; });
         delete state.hiddenFiles[id];
+        delete state.offsets[id];
         if (state.fileId === id) {
             state.fileId = state.files.length ? state.files[0].id : null;
         }
@@ -365,6 +377,11 @@
     function destroyPlots() {
         plots.forEach(function (p) { p.u.destroy(); });
         plots = [];
+        compare = null;
+        if (compareFrame) {
+            cancelAnimationFrame(compareFrame);
+            compareFrame = 0;
+        }
         if (plotByU) {
             plotByU.clear();
         }
@@ -409,6 +426,117 @@
             }
         }
         return null;
+    }
+
+    /** First index with xs[i] >= x (xs ascending). */
+    function lowerBound(xs, x) {
+        var lo = 0;
+        var hi = xs.length;
+        while (lo < hi) {
+            var mid = (lo + hi) >> 1;
+            if (xs[mid] < x) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /** Series value at x, linear between the nearest samples it has; null if none. */
+    function valueAt(values, xs, x) {
+        var hi = lowerBound(xs, x);
+        var lo = hi - 1;
+        while (hi < xs.length && values[hi] == null) {
+            hi++;
+        }
+        while (lo >= 0 && values[lo] == null) {
+            lo--;
+        }
+        if (hi >= xs.length) {
+            return lo >= 0 ? values[lo] : null;
+        }
+        if (lo < 0 || xs[hi] === x) {
+            return values[hi];
+        }
+        return values[lo] + (values[hi] - values[lo]) * (x - xs[lo]) / (xs[hi] - xs[lo]);
+    }
+
+    /**
+     * Index of the visible series drawn closest to the pointer, within GRAB_PX,
+     * or -1. Uses the vertical extent of the line within GRAB_PX either side,
+     * so a steep edge is caught even between its samples.
+     */
+    function traceNear(u, e) {
+        var xs = u.data[0];
+        if (xs.length === 0) {
+            return -1;
+        }
+        var rect = u.over.getBoundingClientRect();
+        var left = e.clientX - rect.left;
+        var top = e.clientY - rect.top;
+        var x = u.posToVal(left, 'x');
+        var xa = u.posToVal(left - GRAB_PX, 'x');
+        var xb = u.posToVal(left + GRAB_PX, 'x');
+        var best = -1;
+        var bestDist = Infinity;
+        var bestMiss = Infinity;
+        for (var i = 1; i < u.series.length; i++) {
+            if (!u.series[i].show) {
+                continue;
+            }
+            var values = u.data[i];
+            var ys = [valueAt(values, xs, xa), valueAt(values, xs, xb)];
+            for (var k = lowerBound(xs, xa); k < xs.length && xs[k] <= xb; k++) {
+                ys.push(values[k]);
+            }
+            var lo = Infinity;
+            var hi = -Infinity;
+            ys.forEach(function (v) {
+                if (v != null) {
+                    lo = Math.min(lo, v);
+                    hi = Math.max(hi, v);
+                }
+            });
+            if (lo > hi) {
+                continue;
+            }
+            var yTop = u.valToPos(hi, 'y');
+            var yBottom = u.valToPos(lo, 'y');
+            var dist = top < yTop ? yTop - top : (top > yBottom ? top - yBottom : 0);
+            /* Overlapping lines: prefer the one passing nearest at the pointer's x. */
+            var at = valueAt(values, xs, x);
+            var miss = at == null ? Infinity : Math.abs(u.valToPos(at, 'y') - top);
+            if (dist <= GRAB_PX && (dist < bestDist || (dist === bestDist && miss < bestMiss))) {
+                best = i;
+                bestDist = dist;
+                bestMiss = miss;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * uPlot mousedown binder: Shift + left button calls onGrab(seriesIndex, event)
+     * for the trace under the pointer instead of starting a zoom selection.
+     */
+    function grabBinder(onGrab) {
+        return function (u, targ, handler, onlyTarg) {
+            return function (e) {
+                if (e.button !== 0 || (onlyTarg !== false && e.target !== targ)) {
+                    return;
+                }
+                if (!e.shiftKey) {
+                    handler(e);
+                    return;
+                }
+                e.preventDefault();         /* no text selection while dragging */
+                var i = traceNear(u, e);
+                if (i > 0) {
+                    onGrab(i - 1, e);
+                }
+            };
+        };
     }
 
     function onCursor(u) {
@@ -493,7 +621,9 @@
     /**
      * One chart with its legend table.
      * spec: { title, subtitle, unit, xs, series: [{ label, color, values, hidden, empty,
-     *         onToggle }], height }
+     *         onToggle, exportLabel }], height,
+     *         extra: { header, title, fill(series, index, td) }  optional legend column,
+     *         onGrab(seriesIndex, mousedownEvent)  optional Shift + drag on a trace }
      */
     function buildPanel(spec) {
         var t = theme();
@@ -505,11 +635,20 @@
         var h2 = document.createElement('h2');
         h2.textContent = spec.title;
         head.appendChild(h2);
+        var sub = null;
         if (spec.subtitle) {
-            var sub = document.createElement('span');
+            sub = document.createElement('span');
             sub.className = 'panel-sub';
             sub.textContent = spec.subtitle;
             head.appendChild(sub);
+        }
+        var shiftLabel = null;
+        if (spec.onGrab) {
+            panel.className += ' grabbable';
+            shiftLabel = document.createElement('span');
+            shiftLabel.className = 'shift-label';
+            shiftLabel.hidden = true;
+            head.appendChild(shiftLabel);
         }
         var timeLabel = document.createElement('span');
         timeLabel.className = 'cursor-time';
@@ -532,11 +671,17 @@
         table.className = 'legend';
         var thead = document.createElement('thead');
         var hr = document.createElement('tr');
-        ['Canale', 'Al cursore', 'Min', 'Max', 'Media'].forEach(function (label, i) {
+        var headers = ['Canale', 'Al cursore', 'Min', 'Max', 'Media'];
+        if (spec.extra) {
+            headers.push(spec.extra.header);
+        }
+        headers.forEach(function (label, i) {
             var th = document.createElement('th');
             th.textContent = label;
             if (i === 2) {
                 th.title = 'Nella zona visibile del grafico';
+            } else if (i === 5) {
+                th.title = spec.extra.title;
             }
             hr.appendChild(th);
         });
@@ -551,7 +696,7 @@
         var entry = {
             u: null, panel: panel, rows: [], series: spec.series, decimals: decimals,
             minutes: minutes, timeDecimals: 1, timeLabel: timeLabel, title: spec.title,
-            subtitle: spec.subtitle || '', unit: spec.unit,
+            subtitle: spec.subtitle || '', subLabel: sub, shiftLabel: shiftLabel, unit: spec.unit,
         };
 
         var width = Math.max(280, chartBox.clientWidth || panel.clientWidth - 24);
@@ -611,6 +756,10 @@
             },
         };
 
+        if (spec.onGrab) {
+            opts.cursor.bind = { mousedown: grabBinder(spec.onGrab) };
+        }
+
         var data = [xs].concat(spec.series.map(function (s) { return s.values; }));
 
         spec.series.forEach(function (s, i) {
@@ -648,6 +797,11 @@
                 tr.appendChild(td);
                 row[name] = td;
             });
+            if (spec.extra) {
+                var tdExtra = document.createElement('td');
+                spec.extra.fill(s, i, tdExtra);
+                tr.appendChild(tdExtra);
+            }
             key.addEventListener('click', function () {
                 var show = !entry.u.series[i + 1].show;
                 entry.u.setSeries(i + 1, { show: show });
@@ -748,16 +902,12 @@
             return;
         }
 
-        /* Align on t = 0 (every log starts there); undefined = no sample at
-         * that x in this file, spanned; null = invalid reading, a real gap. */
-        var tables = chosen.map(function (c) { return [c.file.data.time, c.col.values]; });
-        var joined = uPlot.join(tables, tables.map(function () { return [2]; }));
-        var unit = chosen[0].col.unit;
-
-        buildPanel({
+        var joined = compareData(chosen);
+        compare = { entry: null, chosen: chosen, fields: [] };
+        compare.entry = buildPanel({
             title: chosen[0].col.name,
-            subtitle: (unit ? '[' + unit + '] · ' : '') + 'confronto tra file, allineati sull\'inizio',
-            unit: unit,
+            subtitle: compareSubtitle(chosen),
+            unit: chosen[0].col.unit,
             xs: joined[0],
             height: COMPARE_HEIGHT,
             series: chosen.map(function (c, i) {
@@ -775,9 +925,200 @@
                             state.hiddenFiles[c.file.id] = true;
                         }
                     },
+                    exportLabel: function () {
+                        var off = state.offsets[c.file.id];
+                        return off ? c.file.name + ' (' + formatOffset(off, offsetDecimals(c.file)) + ' s)'
+                                   : c.file.name;
+                    },
                 };
             }),
+            extra: {
+                header: 'Spostamento [s]',
+                title: 'Sposta il file nel tempo per allineare eventi simili. '
+                     + 'Si può anche tenere premuto Maiusc e trascinare il tracciato.',
+                fill: function (s, i, td) {
+                    compare.fields.push(buildOffsetCell(chosen[i], td));
+                },
+            },
+            onGrab: function (i, e) { startShiftDrag(chosen[i], i, e); },
         });
+        refreshOffsetFields();
+    }
+
+    /* ---------------------------------------------------------- time shift */
+
+    /** Sample period of a file: offsets move it by whole samples. */
+    function fileStep(file) {
+        return file.data.periodS > 0 ? file.data.periodS : 0.001;
+    }
+
+    function offsetDecimals(file) {
+        return Math.max(1, decimalsForStep(fileStep(file)));
+    }
+
+    function compareSubtitle(chosen) {
+        var unit = chosen[0].col.unit;
+        var moved = chosen.some(function (c) { return !!state.offsets[c.file.id]; });
+        return (unit ? '[' + unit + '] · ' : '') + 'confronto tra file, '
+             + (moved ? 'con spostamento nel tempo' : 'allineati sull\'inizio');
+    }
+
+    /* Every log starts at t = 0, then each file is moved by its offset.
+     * undefined = no sample at that x in this file, spanned; null = invalid
+     * reading, a real gap. */
+    function compareData(chosen) {
+        var tables = chosen.map(function (c) {
+            return [KdlShift.shiftTimes(c.file.data.time, state.offsets[c.file.id] || 0), c.col.values];
+        });
+        return uPlot.join(tables, tables.map(function () { return [2]; }));
+    }
+
+    /** Sets a file's offset (snapped to its samples) and redraws on the next frame. */
+    function setOffset(file, seconds) {
+        var next = KdlShift.snap(seconds, fileStep(file));
+        if (next === (state.offsets[file.id] || 0)) {
+            return;
+        }
+        if (next) {
+            state.offsets[file.id] = next;
+        } else {
+            delete state.offsets[file.id];
+        }
+        if (compare && !compareFrame) {
+            compareFrame = requestAnimationFrame(updateCompare);
+        }
+    }
+
+    /** New data in the live chart, keeping the zoom (no rebuild). */
+    function updateCompare() {
+        compareFrame = 0;
+        if (!compare) {
+            return;
+        }
+        var entry = compare.entry;
+        var u = entry.u;
+        var range = { min: u.scales.x.min, max: u.scales.x.max };
+        /* setData(.., false) does not redraw: setScale does, and re-fits y. */
+        u.setData(compareData(compare.chosen), false);
+        u.setScale('x', range);
+        entry.subtitle = compareSubtitle(compare.chosen);
+        entry.subLabel.textContent = entry.subtitle;
+        refreshOffsetFields();
+        onCursor(u);
+    }
+
+    function refreshOffsetFields() {
+        compare.fields.forEach(function (refresh) { refresh(); });
+        var entry = compare.entry;
+        if (entry.drag) {
+            var off = state.offsets[entry.drag.id] || 0;
+            entry.shiftLabel.textContent = entry.drag.name + ': '
+                + formatOffset(off, offsetDecimals(entry.drag)) + ' s';
+        }
+    }
+
+    /** Legend cell: ◀ [offset] s ▶ ↺. Returns the function that redisplays it. */
+    function buildOffsetCell(c, td) {
+        var file = c.file;
+        var box = document.createElement('div');
+        box.className = 'shift';
+
+        var nudge = function (samples) {
+            setOffset(file, (state.offsets[file.id] || 0) + samples * fileStep(file));
+        };
+        var button = function (text, title, onClick) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = text;
+            b.title = title;
+            b.setAttribute('aria-label', title + ' (' + file.name + ')');
+            b.addEventListener('click', onClick);
+            return b;
+        };
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.className = 'shift-input';
+        input.setAttribute('aria-label', 'Spostamento di ' + file.name + ' in secondi');
+        var unit = document.createElement('span');
+        unit.className = 'shift-unit';
+        unit.textContent = 's';
+        var reset = button('↺', 'Azzera lo spostamento', function () { setOffset(file, 0); });
+
+        var refresh = function () {
+            var off = state.offsets[file.id] || 0;
+            input.value = formatOffset(off, offsetDecimals(file));
+            reset.disabled = !off;
+        };
+        input.addEventListener('change', function () {
+            var v = KdlShift.parseOffset(input.value);
+            if (v !== null) {
+                setOffset(file, v);
+            }
+            refresh();              /* invalid text, or the value snapped to a sample */
+        });
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                nudge(e.key === 'ArrowUp' ? 1 : -1);
+            } else if (e.key === 'Escape') {
+                refresh();
+                input.blur();
+            }
+        });
+
+        box.appendChild(button('◀', 'Indietro di un campione', function () { nudge(-1); }));
+        box.appendChild(input);
+        box.appendChild(unit);
+        box.appendChild(button('▶', 'Avanti di un campione', function () { nudge(1); }));
+        box.appendChild(reset);
+        td.appendChild(box);
+        return refresh;
+    }
+
+    /** Shift + drag on a compare trace: moves that file until the button is released. */
+    function startShiftDrag(c, i, e) {
+        var entry = compare.entry;
+        var u = entry.u;
+        var file = c.file;
+        var start = state.offsets[file.id] || 0;
+        var xAt = function (ev) {
+            return u.posToVal(ev.clientX - u.over.getBoundingClientRect().left, 'x');
+        };
+        var x0 = xAt(e);
+
+        var move = function (ev) {
+            setOffset(file, start + xAt(ev) - x0);
+        };
+        var end = function () {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', end);
+            document.removeEventListener('keydown', key);
+            window.removeEventListener('blur', end);
+            if (compare && compare.entry === entry) {
+                entry.drag = null;
+                entry.shiftLabel.hidden = true;
+                entry.panel.classList.remove('shifting');
+                u.setSeries(null, { focus: true });
+            }
+        };
+        var key = function (ev) {
+            if (ev.key === 'Escape') {
+                setOffset(file, start);
+                end();
+            }
+        };
+
+        entry.drag = file;
+        entry.shiftLabel.hidden = false;
+        entry.panel.classList.add('shifting');
+        u.setSeries(i + 1, { focus: true });
+        refreshOffsetFields();
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
+        document.addEventListener('keydown', key);
+        window.addEventListener('blur', end);
     }
 
     function render() {
@@ -842,7 +1183,7 @@
                     return;
                 }
                 var st = p.rows[i].stats;
-                var text = s.label + (st ? '  max ' + formatNumber(st.max, p.decimals) +
+                var text = (s.exportLabel ? s.exportLabel() : s.label) + (st ? '  max ' + formatNumber(st.max, p.decimals) +
                                              '  min ' + formatNumber(st.min, p.decimals) : '');
                 items.push({ color: s.color, text: text });
             });
@@ -937,7 +1278,8 @@
     /* ---------------------------------------------------------------- wiring */
 
     function init() {
-        if (typeof uPlot === 'undefined' || typeof KdlCsv === 'undefined') {
+        if (typeof uPlot === 'undefined' || typeof KdlCsv === 'undefined'
+            || typeof KdlShift === 'undefined') {
             showMessage('Pagina incompleta: libreria grafica non caricata.', true);
             return;
         }
@@ -995,6 +1337,14 @@
                 addFiles(e.dataTransfer.files);
             }
         });
+
+        /* Shift held: the compare chart shows a move cursor before the drag starts. */
+        var shiftHeld = function (e) {
+            document.body.classList.toggle('shift-held', e.type !== 'blur' && e.shiftKey);
+        };
+        document.addEventListener('keydown', shiftHeld);
+        document.addEventListener('keyup', shiftHeld);
+        window.addEventListener('blur', shiftHeld);
 
         if (typeof ResizeObserver !== 'undefined') {
             new ResizeObserver(resizePlots).observe($('panels'));

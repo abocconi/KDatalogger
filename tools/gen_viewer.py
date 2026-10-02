@@ -3,7 +3,7 @@
 
 Inlines the vendored uPlot build, the CSV parser and the app script into
 tools/viewer/src/viewer.html, so the result opens from file:// with no network
-and no other file next to it. Runs the parser test first (needs node; skip
+and no other file next to it. Runs the viewer tests first (needs node; skip
 with --skip-tests).
 
 The default output is the copy the firmware embeds (component log_viewer) and
@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VIEWER = ROOT / "tools" / "viewer"
 TEMPLATE = VIEWER / "src" / "viewer.html"
 DEFAULT_OUTPUT = ROOT / "components" / "log_viewer" / "assets" / "datalogger.html"
-TEST = VIEWER / "test" / "csv_parser.test.js"
+TESTS = VIEWER / "test"
 
 INLINE = re.compile(r"^[ \t]*(?:/\*|//)@@INLINE_(CSS|JS) (\S+)@@(?:\*/)?[ \t]*$", re.MULTILINE)
 
@@ -42,9 +42,10 @@ def run_tests():
     node = shutil.which("node")
     if node is None:
         sys.exit("node not found: install it or pass --skip-tests")
-    result = subprocess.run([node, str(TEST)], cwd=VIEWER)
-    if result.returncode != 0:
-        sys.exit("parser test failed")
+    for test in sorted(TESTS.glob("*.test.js")):
+        result = subprocess.run([node, str(test)], cwd=VIEWER)
+        if result.returncode != 0:
+            sys.exit(f"{test.name} failed")
 
 
 def main():
