@@ -88,3 +88,6 @@ build-host/
 # VS Code: the ESP-IDF extension writes machine-specific values here (serial
 # port, IDF install path) at WorkspaceFolder scope, ignoring idf.saveScope.
 .vscode/settings.json
+
+# Hardware documents (schematics, datasheets) stay local: the repository is public.
+docs/*.pdf
